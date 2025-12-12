@@ -1,4 +1,3 @@
-// https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
   compatibilityDate: '2024-11-01',
   devtools: { enabled: true },
@@ -7,7 +6,6 @@ export default defineNuxtConfig({
   ],
   app: {
   },
-  // Static site generation configuration
   ssr: true,
   nitro: {
     prerender: {
@@ -15,7 +13,6 @@ export default defineNuxtConfig({
       routes: ['/']
     }
   },
-  // Ensure all pages are pre-rendered
   experimental: {
     payloadExtraction: false
   }
