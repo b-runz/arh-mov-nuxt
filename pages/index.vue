@@ -18,6 +18,23 @@ const movies = await useMovies()
 // Track unfolded cinemas
 const unfoldedCinemas = ref<string[]>([]);
 
+// Rating filter state
+const showHighRatedOnly = ref(false);
+
+// Computed property for filtered movies
+const filteredMovies = computed(() => {
+  if (!movies?.value) return [];
+  
+  if (showHighRatedOnly.value) {
+    return movies.value.filter(movie => {
+      const rating = parseFloat(movie.imdb_rating);
+      return !isNaN(rating) && rating > 7.0;
+    });
+  }
+  
+  return movies.value;
+});
+
 // Toggle cinemas function
 const toggleCinemas = (movieId: string) => {
   if (unfoldedCinemas.value.includes(movieId)) {
@@ -34,14 +51,31 @@ const toggleCinemas = (movieId: string) => {
   <div class="container mx-auto px-4 mt-6">
     <div class="mb-6">
       <h1 class="text-3xl font-bold text-center">Movies in Aarhus</h1>
+      
+      <!-- Rating Filter -->
+      <div class="mt-4 flex justify-center">
+        <label class="inline-flex items-center">
+          <input 
+            type="checkbox" 
+            v-model="showHighRatedOnly"
+            class="form-checkbox h-5 w-5 text-blue-600"
+          />
+          <span class="ml-2 text-gray-700">Show only movies with rating > 7.0</span>
+        </label>
+      </div>
     </div>
     <div v-if="!movies || movies.length === 0" class="mt-6">
       <div class="text-center">
         <p>Loading...</p>
       </div>
     </div>
+    <div v-else-if="filteredMovies.length === 0 && showHighRatedOnly" class="mt-6">
+      <div class="text-center">
+        <p class="text-gray-600">No movies found with rating above 7.0</p>
+      </div>
+    </div>
     <div v-else class="space-y-6">
-      <div v-for="movie in movies" :key="movie.id" class="flex flex-col md:flex-row gap-4 bg-white shadow-lg rounded-lg p-4">
+      <div v-for="movie in filteredMovies" :key="movie.id" class="flex flex-col md:flex-row gap-4 bg-white shadow-lg rounded-lg p-4">
         <div class="w-full md:w-1/4">
           <img :src="movie.poster" class="w-full h-auto rounded" alt="Movie Poster">
         </div>
