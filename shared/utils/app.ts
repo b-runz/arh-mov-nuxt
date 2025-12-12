@@ -2,7 +2,6 @@
 import moment from 'moment';
 import type { Movie } from "../types/movie";
 import type { Showing } from "../types/showing";
-import { createHash } from 'node:crypto'
 
 export async function processData(data: any): Promise<Movie[]> {
     // Perform any further processing or rendering with the transformed data
@@ -48,9 +47,9 @@ export async function processData(data: any): Promise<Movie[]> {
                     imdb_link: imdb_link,
                     imdb_rating: imdb_rating,
                     cinemas: {},
-                    id: md5(title),
+                    id: createUrlSlug(title),
                     poster: poster_uri,
-                    release_date: release_date,
+                    release_date: release_date.toISOString(),
                     display_release_date: release_date.locale("en").format('DD. MMM. YYYY')
                 }
             }
@@ -91,7 +90,7 @@ export async function processData(data: any): Promise<Movie[]> {
                         if (!(date in showings)) {
                             showings[date] = []
                         }
-                        showings[date].push({
+                        showings[date]?.push({
                             link: "https://kino.dk/ticketflow/showtimes/" + data_time['id'],
                             time: data_time['time'] + appendText
                         })
@@ -101,10 +100,12 @@ export async function processData(data: any): Promise<Movie[]> {
 
 
             let movie = movies[id]
-            movie.cinemas[data_cinema_id] = {
-                name: data_cinema_name,
-                id: data_cinema_id,
-                showing: showings
+            if (movie) {
+                movie.cinemas[data_cinema_id] = {
+                    name: data_cinema_name,
+                    id: data_cinema_id,
+                    showing: showings
+                }
             }
 
         }
@@ -113,14 +114,15 @@ export async function processData(data: any): Promise<Movie[]> {
 }
 
 function sortMoviesByPremiereDate(movies: Record<number, Movie>): Movie[] {
-    const now = moment();
+    const now = new Date();
 
     // Split movies into two arrays based on release date
     const beforeNow: Movie[] = [];
     const afterNow: Movie[] = [];
 
     Object.values(movies).forEach(movie => {
-      if (movie.release_date.isBefore(now)) {
+      const releaseDate = new Date(movie.release_date);
+      if (releaseDate < now) {
         beforeNow.push(movie);
       } else {
         afterNow.push(movie);
@@ -128,13 +130,22 @@ function sortMoviesByPremiereDate(movies: Record<number, Movie>): Movie[] {
     });
 
     // Sort both arrays by release date (most recent first)
-    beforeNow.sort((a, b) => b.release_date.diff(a.release_date));
-    afterNow.sort((a, b) => b.release_date.diff(a.release_date));
+    beforeNow.sort((a, b) => new Date(b.release_date).getTime() - new Date(a.release_date).getTime());
+    afterNow.sort((a, b) => new Date(b.release_date).getTime() - new Date(a.release_date).getTime());
 
     // Merge sorted arrays into one
     return [...beforeNow, ...afterNow];
 }
 
-function md5(content) {
-    return createHash('md5').update(content).digest('hex')
+function createUrlSlug(title: string): string {
+    return title
+        .toLowerCase()
+        .replace(/[æøå]/g, (match) => {
+            const replacements: Record<string, string> = { 'æ': 'ae', 'ø': 'o', 'å': 'aa' };
+            return replacements[match] || match;
+        })
+        .replace(/[^a-z0-9\s-]/g, '') // Remove special characters except spaces and hyphens
+        .replace(/\s+/g, '-') // Replace spaces with hyphens
+        .replace(/-+/g, '-') // Replace multiple hyphens with single hyphen
+        .replace(/^-|-$/g, ''); // Remove leading/trailing hyphens
 }

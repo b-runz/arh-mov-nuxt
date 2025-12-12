@@ -1,41 +1,82 @@
 <script setup lang="ts">
+import { useMovies } from '~/composables/useMovies';
 import type { Movie } from '../shared/types/movie';
 
-const { data: movies, status, error, refresh, clear } = await useAsyncData<Movie[]>(
-  'movieShowings',
-  async () => $fetch('/api/getMovieShowings')
-)
+// Set page title and meta
+useHead({
+  title: 'Movies in Aarhus',
+  meta: [
+    {
+      name: 'description',
+      content: 'Find movie showtimes and cinema information in Aarhus'
+    }
+  ]
+})
 
+const movies = await useMovies()
+
+// Track unfolded cinemas
+const unfoldedCinemas = ref<string[]>([]);
+
+// Toggle cinemas function
+const toggleCinemas = (movieId: string) => {
+  if (unfoldedCinemas.value.includes(movieId)) {
+    // If the movie's cinemas are already unfolded, remove it from the unfoldedCinemas array
+    unfoldedCinemas.value = unfoldedCinemas.value.filter(id => id !== movieId);
+  } else {
+    // If the movie's cinemas are not unfolded, add it to the unfoldedCinemas array
+    unfoldedCinemas.value.push(movieId);
+  }
+};
 </script>
 
 <template>
-  <div>
-    <div class="row">
-      <div class="col-12">
-        <h1 class="text-center">Movies</h1>
+  <div class="container mx-auto px-4 mt-6">
+    <div class="mb-6">
+      <h1 class="text-3xl font-bold text-center">Movies in Aarhus</h1>
+    </div>
+    <div v-if="!movies || movies.length === 0" class="mt-6">
+      <div class="text-center">
+        <p>Loading...</p>
       </div>
     </div>
-
-    <div>
-      <div v-for="movie in movies" :key="movie.id" class="row mt-3">
-        <div class="col-3">
-          <img :src="movie.poster" class="img-fluid" alt="Movie Poster">
+    <div v-else class="space-y-6">
+      <div v-for="movie in movies" :key="movie.id" class="flex flex-col md:flex-row gap-4 bg-white shadow-lg rounded-lg p-4">
+        <div class="w-full md:w-1/4">
+          <img :src="movie.poster" class="w-full h-auto rounded" alt="Movie Poster">
         </div>
-        <div class="col-9">
-          <h2>{{ movie.title }}
+        <div class="w-full md:w-3/4">
+          <h2 class="text-2xl font-semibold mb-2">
+            <NuxtLink :to="'/movies/' + movie.id" class="text-blue-600 hover:text-blue-800">{{ movie.title }}</NuxtLink>
           </h2>
-          <p>
-            <NuxtLink to="'https://www.imdb.com/title/' + {{movie.imdb_link}}">
-              Rating: ?
-            </NuxtLink>
+          <p class="mb-2">
+            <a :href="'https://www.imdb.com/title/' + movie.imdb_link" target="_blank" class="text-gray-700 hover:text-gray-900"> 
+              Rating: {{ movie.imdb_rating }}
+            </a>
           </p>
-          <p>Release Date: {{ movie.display_release_date }}</p>
+          <p class="mb-4">Release Date: {{ movie.display_release_date }}</p>
           <div class="mt-3">
-            <button > Show Cinemas <i class="bi bi-arrow-down"></i>
+            <button 
+              @click="toggleCinemas(movie.id)" 
+              class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded inline-flex items-center" 
+              v-if="!unfoldedCinemas.includes(movie.id)"
+            > 
+              Show Cinemas <i class="bi bi-arrow-down ml-2"></i>
             </button>
+            <button 
+              @click="toggleCinemas(movie.id)" 
+              class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded inline-flex items-center" 
+              v-else
+            > 
+              Hide Cinemas <i class="bi bi-arrow-up ml-2"></i>
+            </button>
+            <div v-if="unfoldedCinemas.includes(movie.id)" class="mt-4">
+              <CinemaShowing :cinemas="movie.cinemas" />
+            </div>
           </div>
         </div>
       </div>
     </div>
   </div>
 </template>
+

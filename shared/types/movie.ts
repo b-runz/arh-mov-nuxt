@@ -1,5 +1,5 @@
 import type { Cinema } from "./cinema";
-import type { Moment } from 'moment';
+
 export interface Movie {
     title: string;
     imdb_link: string;
@@ -7,6 +7,6 @@ export interface Movie {
     id: string;
     cinemas: Record<number, Cinema>;
     poster: string;
-    release_date: Moment,
+    release_date: string; 
     display_release_date: string
   }

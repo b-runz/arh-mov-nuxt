@@ -1,3 +1,72 @@
+<script setup lang="ts">
+import { useMovies } from '~/composables/useMovies';
+import type { Movie } from '../../shared/types/movie';
+
+const route = useRoute();
+const movieId = route.params.id as string;
+
+// Use the same composable to get movies data (will be cached/shared)
+const movies = await useMovies();
+
+// Find the specific movie by ID
+const movie = computed(() => {
+  if (!movies.value) return null;
+  return movies.value.find((m: Movie) => m.id === movieId);
+});
+
+// Set page title dynamically based on movie title
+watchEffect(() => {
+  if (movie.value) {
+    useHead({
+      title: `${movie.value.title} - Movies in Aarhus`,
+      meta: [
+        {
+          name: 'description',
+          content: `Find showtimes for ${movie.value.title} in Aarhus cinemas. IMDB Rating: ${movie.value.imdb_rating}`
+        }
+      ]
+    })
+  }
+});
+
+// Scroll to top when component mounts
+onMounted(() => {
+  window.scrollTo({
+    top: 0,
+    left: 0,
+    behavior: 'instant',
+  });
+});
+</script>
+
 <template>
-    <span>Name: {{ $route.params.id }}</span>
-  </template>
+  <div class="container mx-auto px-4 mt-6">
+    <div v-if="!movie" class="mt-6">
+      <div class="text-center">
+        <p>Loading...</p>
+      </div>
+    </div>
+    <div v-else>
+      <div class="mb-6">
+        <h1 class="text-3xl font-bold text-center">{{ movie.title }}</h1>
+      </div>
+      <div class="flex flex-col md:flex-row gap-6 mb-6">
+        <div class="w-full md:w-1/4">
+          <img :src="movie.poster" class="w-full h-auto rounded shadow-lg" alt="Movie Poster">
+        </div>
+        <div class="w-full md:w-3/4">
+          <p class="mb-2">
+            <a :href="'https://www.imdb.com/title/' + movie.imdb_link" target="_blank" class="text-blue-600 hover:text-blue-800">
+              Rating: {{ movie.imdb_rating }}
+            </a>
+          </p>
+          <p class="mb-6">Release Date: {{ movie.display_release_date }}</p>
+          <div>
+            <CinemaShowing :cinemas="movie.cinemas" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
