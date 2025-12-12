@@ -2,6 +2,7 @@
 import moment from 'moment';
 import type { Movie } from "../types/movie";
 import type { Showing } from "../types/showing";
+import { getRating } from './imdb';
 
 export async function processData(data: any): Promise<Movie[]> {
     // Perform any further processing or rendering with the transformed data
@@ -34,7 +35,7 @@ export async function processData(data: any): Promise<Movie[]> {
                 imdb_link = data_movie.content.field_imdb;
             }
 
-            let imdb_rating: string = "?";
+            let imdb_rating: string = await getRating(imdb_link);
 
             if (!(id in movies)) {
 
