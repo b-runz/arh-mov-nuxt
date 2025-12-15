@@ -86,10 +86,10 @@ const toggleCinemas = (movieId: string) => {
           <!-- Content -->
           <div class="flex-1 min-w-0">
             <h2 class="text-xl md:text-2xl font-semibold mb-2">
-              <NuxtLink :to="'/movies/' + movie.id" class="text-blue-600 hover:text-blue-800">{{ movie.title }}</NuxtLink>
+              <NuxtLink :to="'/movies/' + movie.id" class="text-black visited:text-red-600 underline">{{ movie.title }}</NuxtLink>
             </h2>
             <p class="mb-2">
-              <a :href="'https://www.imdb.com/title/' + movie.imdb_link" target="_blank" class="text-gray-700 hover:text-gray-900"> 
+              <a :href="'https://www.imdb.com/title/' + movie.imdb_link" target="_blank" class="text-black visited:text-red-600 underline"> 
                 Rating: {{ movie.imdb_rating }}
               </a>
             </p>
@@ -97,17 +97,19 @@ const toggleCinemas = (movieId: string) => {
             <div class="mt-3">
               <button 
                 @click="toggleCinemas(movie.id)" 
-                class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded inline-flex items-center" 
+                class="bg-blue-500 text-white hover:bg-blue-500 rounded flex items-center justify-center pl-4 pr-4 pt-2 pb-2 font-bold" 
                 v-if="!unfoldedCinemas.includes(movie.id)"
               > 
-                Show Cinemas <i class="bi bi-arrow-down ml-2"></i>
+                <span>Show Cinemas</span>
+                <i class="bi bi-arrow-down"></i>
               </button>
               <button 
                 @click="toggleCinemas(movie.id)" 
-                class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded inline-flex items-center" 
+                class="bg-blue-500 text-white hover:bg-blue-500 rounded flex items-center justify-center pl-4 pr-4 pt-2 pb-2 font-bold" 
                 v-else
               > 
-                Hide Cinemas <i class="bi bi-arrow-up ml-2"></i>
+                <span>Hide Cinemas</span>
+                <i class="bi bi-arrow-up"></i>
               </button>
             </div>
           </div>

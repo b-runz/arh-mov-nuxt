@@ -48,7 +48,7 @@ onMounted(() => {
     </div>
     <div v-else>
       <div class="mb-6">
-        <h1 class="text-3xl font-bold text-center">{{ movie.title }}</h1>
+        <h1 class="text-3xl font-bold text-center text-black visited:text-red-600 underline">{{ movie.title }}</h1>
       </div>
       <div class="bg-white shadow-lg rounded-lg p-4">
         <!-- Mobile and desktop layout wrapper -->
@@ -61,7 +61,7 @@ onMounted(() => {
           <!-- Content -->
           <div class="flex-1 min-w-0">
             <p class="mb-2">
-              <a :href="'https://www.imdb.com/title/' + movie.imdb_link" target="_blank" class="text-blue-600 hover:text-blue-800">
+              <a :href="'https://www.imdb.com/title/' + movie.imdb_link" target="_blank" class="text-black visited:text-red-600 underline">
                 Rating: {{ movie.imdb_rating }}
               </a>
             </p>
