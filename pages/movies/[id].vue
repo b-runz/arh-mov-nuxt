@@ -50,20 +50,33 @@ onMounted(() => {
       <div class="mb-6">
         <h1 class="text-3xl font-bold text-center">{{ movie.title }}</h1>
       </div>
-      <div class="flex flex-col md:flex-row gap-6 mb-6">
-        <div class="w-full md:w-1/4">
-          <img :src="movie.poster" class="w-full h-auto rounded shadow-lg" alt="Movie Poster">
-        </div>
-        <div class="w-full md:w-3/4">
-          <p class="mb-2">
-            <a :href="'https://www.imdb.com/title/' + movie.imdb_link" target="_blank" class="text-blue-600 hover:text-blue-800">
-              Rating: {{ movie.imdb_rating }}
-            </a>
-          </p>
-          <p class="mb-6">Release Date: {{ movie.display_release_date }}</p>
-          <div>
-            <CinemaShowing :cinemas="movie.cinemas" />
+      <div class="bg-white shadow-lg rounded-lg p-4">
+        <!-- Mobile and desktop layout wrapper -->
+        <div class="flex flex-row md:flex-row gap-4">
+          <!-- Poster -->
+          <div class="w-24 sm:w-28 md:w-1/4 flex-shrink-0">
+            <img :src="movie.poster" class="w-full h-auto rounded shadow-lg" alt="Movie Poster">
           </div>
+          
+          <!-- Content -->
+          <div class="flex-1 min-w-0">
+            <p class="mb-2">
+              <a :href="'https://www.imdb.com/title/' + movie.imdb_link" target="_blank" class="text-blue-600 hover:text-blue-800">
+                Rating: {{ movie.imdb_rating }}
+              </a>
+            </p>
+            <p class="mb-4 md:mb-6">Release Date: {{ movie.display_release_date }}</p>
+            
+            <!-- Cinema showings - next to poster on desktop, below on mobile -->
+            <div class="hidden md:block">
+              <CinemaShowing :cinemas="movie.cinemas" />
+            </div>
+          </div>
+        </div>
+        
+        <!-- Cinema showings - displayed below poster on mobile only -->
+        <div class="mt-4 md:hidden">
+          <CinemaShowing :cinemas="movie.cinemas" />
         </div>
       </div>
     </div>

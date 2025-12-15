@@ -68,20 +68,18 @@ const haveAllShowingsPassed = (dateStr: string, showings: any[]): boolean => {
     <ul class="space-y-4">
       <li v-for="(cinema, cinemaId) in cinemas" :key="cinemaId">
         <div class="font-bold text-lg mb-2">{{ cinema.name }}</div>
-        <ul class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div class="flex flex-wrap gap-4">
           <template v-for="(showing, date) in cinema.showing" :key="date">
-            <li v-if="!haveAllShowingsPassed(date, showing)" class="bg-gray-100 border border-gray-300 rounded p-3">
+            <div v-if="!haveAllShowingsPassed(date, showing)" class="bg-gray-100 border border-gray-300 rounded p-3 min-w-fit">
               <div class="font-bold mb-2">{{ date }}</div>
-              <ul class="space-y-1">
+              <div class="flex flex-wrap gap-2">
                 <template v-for="show in showing" :key="show.link">
-                  <li v-if="!hasShowingPassed(date, show.time)">
-                    <a :href="show.link" class="text-black visited:text-red-600 font-bold underline">{{ show.time }}</a>
-                  </li>
+                  <a v-if="!hasShowingPassed(date, show.time)" :href="show.link" class="text-black visited:text-red-600 font-bold underline bg-white px-2 py-1 rounded text-sm whitespace-nowrap">{{ show.time }}</a>
                 </template>
-              </ul>
-            </li>
+              </div>
+            </div>
           </template>
-        </ul>
+        </div>
       </li>
     </ul>
   </div>

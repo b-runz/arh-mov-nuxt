@@ -75,39 +75,47 @@ const toggleCinemas = (movieId: string) => {
       </div>
     </div>
     <div v-else class="space-y-6">
-      <div v-for="movie in filteredMovies" :key="movie.id" class="flex flex-col md:flex-row gap-4 bg-white shadow-lg rounded-lg p-4">
-        <div class="w-full md:w-1/4">
-          <img :src="movie.poster" class="w-full h-auto rounded" alt="Movie Poster">
-        </div>
-        <div class="w-full md:w-3/4">
-          <h2 class="text-2xl font-semibold mb-2">
-            <NuxtLink :to="'/movies/' + movie.id" class="text-blue-600 hover:text-blue-800">{{ movie.title }}</NuxtLink>
-          </h2>
-          <p class="mb-2">
-            <a :href="'https://www.imdb.com/title/' + movie.imdb_link" target="_blank" class="text-gray-700 hover:text-gray-900"> 
-              Rating: {{ movie.imdb_rating }}
-            </a>
-          </p>
-          <p class="mb-4">Release Date: {{ movie.display_release_date }}</p>
-          <div class="mt-3">
-            <button 
-              @click="toggleCinemas(movie.id)" 
-              class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded inline-flex items-center" 
-              v-if="!unfoldedCinemas.includes(movie.id)"
-            > 
-              Show Cinemas <i class="bi bi-arrow-down ml-2"></i>
-            </button>
-            <button 
-              @click="toggleCinemas(movie.id)" 
-              class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded inline-flex items-center" 
-              v-else
-            > 
-              Hide Cinemas <i class="bi bi-arrow-up ml-2"></i>
-            </button>
-            <div v-if="unfoldedCinemas.includes(movie.id)" class="mt-4">
-              <CinemaShowing :cinemas="movie.cinemas" />
+      <div v-for="movie in filteredMovies" :key="movie.id" class="bg-white shadow-lg rounded-lg p-4">
+        <!-- Mobile and desktop layout wrapper -->
+        <div class="flex flex-row md:flex-row gap-4">
+          <!-- Poster -->
+          <div class="w-24 sm:w-28 md:w-1/4 flex-shrink-0">
+            <img :src="movie.poster" class="w-full h-auto rounded" alt="Movie Poster">
+          </div>
+          
+          <!-- Content -->
+          <div class="flex-1 min-w-0">
+            <h2 class="text-xl md:text-2xl font-semibold mb-2">
+              <NuxtLink :to="'/movies/' + movie.id" class="text-blue-600 hover:text-blue-800">{{ movie.title }}</NuxtLink>
+            </h2>
+            <p class="mb-2">
+              <a :href="'https://www.imdb.com/title/' + movie.imdb_link" target="_blank" class="text-gray-700 hover:text-gray-900"> 
+                Rating: {{ movie.imdb_rating }}
+              </a>
+            </p>
+            <p class="mb-4">Release Date: {{ movie.display_release_date }}</p>
+            <div class="mt-3">
+              <button 
+                @click="toggleCinemas(movie.id)" 
+                class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded inline-flex items-center" 
+                v-if="!unfoldedCinemas.includes(movie.id)"
+              > 
+                Show Cinemas <i class="bi bi-arrow-down ml-2"></i>
+              </button>
+              <button 
+                @click="toggleCinemas(movie.id)" 
+                class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded inline-flex items-center" 
+                v-else
+              > 
+                Hide Cinemas <i class="bi bi-arrow-up ml-2"></i>
+              </button>
             </div>
           </div>
+        </div>
+        
+        <!-- Cinema showings - displayed below poster on mobile -->
+        <div v-if="unfoldedCinemas.includes(movie.id)" class="mt-4">
+          <CinemaShowing :cinemas="movie.cinemas" />
         </div>
       </div>
     </div>
