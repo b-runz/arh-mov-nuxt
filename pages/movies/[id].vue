@@ -48,9 +48,9 @@ onMounted(() => {
     </div>
     <div v-else>
       <div class="mb-6">
-        <h1 class="text-3xl font-bold text-center text-black visited:text-red-600 underline">{{ movie.title }}</h1>
+        <h1 class="text-3xl font-bold text-center text-white">{{ movie.title }}</h1>
       </div>
-      <div class="bg-white shadow-lg rounded-lg p-4">
+      <div class="bg-gray-800 shadow-lg rounded-lg p-4">
         <!-- Mobile and desktop layout wrapper -->
         <div class="flex flex-row md:flex-row gap-4">
           <!-- Poster -->
@@ -61,7 +61,7 @@ onMounted(() => {
           <!-- Content -->
           <div class="flex-1 min-w-0">
             <p class="mb-2">
-              <a :href="'https://www.imdb.com/title/' + movie.imdb_link" target="_blank" class="text-black visited:text-red-600 underline">
+              <a :href="'https://www.imdb.com/title/' + movie.imdb_link" target="_blank" class="text-orange-400 hover:text-orange-300 underline">
                 Rating: {{ movie.imdb_rating }}
               </a>
             </p>
