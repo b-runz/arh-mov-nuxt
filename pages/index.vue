@@ -60,7 +60,7 @@ const toggleCinemas = (movieId: string) => {
             v-model="showHighRatedOnly"
             class="form-checkbox h-5 w-5 text-blue-600"
           />
-          <span class="ml-2 text-gray-700">Show only movies with rating > 7.0</span>
+          <span class="ml-2 text-gray-300">Show only movies with rating > 7.0</span>
         </label>
       </div>
     </div>
@@ -71,11 +71,11 @@ const toggleCinemas = (movieId: string) => {
     </div>
     <div v-else-if="filteredMovies.length === 0 && showHighRatedOnly" class="mt-6">
       <div class="text-center">
-        <p class="text-gray-600">No movies found with rating above 7.0</p>
+        <p class="text-gray-400">No movies found with rating above 7.0</p>
       </div>
     </div>
     <div v-else class="space-y-6">
-      <div v-for="movie in filteredMovies" :key="movie.id" class="bg-white shadow-lg rounded-lg p-4">
+      <div v-for="movie in filteredMovies" :key="movie.id" class="bg-gray-800 shadow-lg rounded-lg p-4">
         <!-- Mobile and desktop layout wrapper -->
         <div class="flex flex-row md:flex-row gap-4">
           <!-- Poster -->
@@ -86,10 +86,10 @@ const toggleCinemas = (movieId: string) => {
           <!-- Content -->
           <div class="flex-1 min-w-0">
             <h2 class="text-xl md:text-2xl font-semibold mb-2">
-              <NuxtLink :to="'/movies/' + movie.id" class="text-black visited:text-red-600 underline">{{ movie.title }}</NuxtLink>
+              <NuxtLink :to="'/movies/' + movie.id" class="text-white hover:text-orange-500 underline">{{ movie.title }}</NuxtLink>
             </h2>
             <p class="mb-2">
-              <a :href="'https://www.imdb.com/title/' + movie.imdb_link" target="_blank" class="text-black visited:text-red-600 underline"> 
+              <a :href="'https://www.imdb.com/title/' + movie.imdb_link" target="_blank" class="text-white hover:text-orange-500 underline"> 
                 Rating: {{ movie.imdb_rating }}
               </a>
             </p>
@@ -97,7 +97,7 @@ const toggleCinemas = (movieId: string) => {
             <div class="mt-3">
               <button 
                 @click="toggleCinemas(movie.id)" 
-                class="bg-blue-500 text-white hover:bg-blue-500 rounded flex items-center justify-center pl-4 pr-4 pt-2 pb-2 font-bold" 
+                class="bg-orange-700 text-white hover:bg-orange-600 rounded flex items-center justify-center pl-4 pr-4 pt-2 pb-2 font-bold" 
                 v-if="!unfoldedCinemas.includes(movie.id)"
               > 
                 <span>Show Cinemas</span>
@@ -105,7 +105,7 @@ const toggleCinemas = (movieId: string) => {
               </button>
               <button 
                 @click="toggleCinemas(movie.id)" 
-                class="bg-blue-500 text-white hover:bg-blue-500 rounded flex items-center justify-center pl-4 pr-4 pt-2 pb-2 font-bold" 
+                class="bg-orange-700 text-white hover:bg-orange-600 rounded flex items-center justify-center pl-4 pr-4 pt-2 pb-2 font-bold" 
                 v-else
               > 
                 <span>Hide Cinemas</span>
