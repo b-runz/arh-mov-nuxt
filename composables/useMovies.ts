@@ -5,7 +5,7 @@ export const useMovies = async () => {
   // Use asyncData to fetch at build time and embed in static HTML
   const { data: movies } = await useAsyncData<Movie[]>('movies', async () => {
     try {
-      const response = await fetch('https://api.kino.dk/ticketflow/showtimes?format=json&region=content&city=24-41-70-55&sort=alphabetical');
+      const response = await fetch('https://api.kino.dk/ticketflow/showtimes?format=json&region=content&city=94-70-55-79&sort=alphabetical');
       const data = await response.json();
       return await processData(data);
     } catch (error) {
