@@ -45,4 +45,7 @@ export async function getRating(tt: string): Promise<string> {
         console.warn(`Failed to fetch IMDB rating for ${tt}:`, error);
         return '?';
     }
+
+
+    // return "?"
 }
