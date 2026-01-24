@@ -12,7 +12,7 @@ const RATE_LIMIT_DELAY = 500; // 500ms delay between calls
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export async function getRating(tt: string): Promise<string> {
-    console.log(tt);
+    console.log('Fetching rating for:', tt);
     // Implement rate limiting
     const now = Date.now();
     const timeSinceLastCall = now - lastCallTime;
@@ -23,18 +23,15 @@ export async function getRating(tt: string): Promise<string> {
     }
     
     lastCallTime = Date.now();
-    const imdbUrl = `https://www.imdb.com/title/${tt}/`;
+    const imdbUrl = `https://m.imdb.com/title/${tt}/`;
 
     try {
-        const html = await $fetch<string>(imdbUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0'
-            }
-        });
+        const html = await makeHttpsRequest(imdbUrl);
         
         const $ = cheerio.load(html);
         const rating = $('div[data-testid="hero-rating-bar__aggregate-rating__score"]:first span:nth-child(1)').text();
-
+        
+        console.log('Extracted rating:', rating.trim() || 'Not found');
         return rating.trim() || '?';
     } catch (error: any) {
         // Handle 404 errors specifically
@@ -43,9 +40,35 @@ export async function getRating(tt: string): Promise<string> {
             return '?';
         }
         
-        console.warn(`Failed to fetch IMDB rating for ${tt}:`, error);
+        console.warn(`Failed to fetch IMDB rating for ${tt}:`, error.message);
         return '?';
     }
+
+// Helper function to make HTTPS requests with proper headers
+async function makeHttpsRequest(url: string): Promise<string> {
+    try {
+        const response = await $fetch<string>(url, {
+            method: 'GET',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9'
+            },
+            // Ensure we get the raw response as text
+            parseResponse: (txt) => txt,
+            // Handle different response types
+            responseType: 'text'
+        });
+        
+        return response;
+    } catch (error: any) {
+        // $fetch throws errors for HTTP error statuses
+        if (error?.status || error?.statusCode) {
+            throw new Error(`HTTP ${error.status || error.statusCode}: ${error.statusText || error.message}`);
+        }
+        throw error;
+    }
+}
 
 
     // return "?"
