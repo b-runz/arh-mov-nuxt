@@ -12,6 +12,7 @@ const RATE_LIMIT_DELAY = 500; // 500ms delay between calls
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export async function getRating(tt: string): Promise<string> {
+    console.log(tt);
     // Implement rate limiting
     const now = Date.now();
     const timeSinceLastCall = now - lastCallTime;
