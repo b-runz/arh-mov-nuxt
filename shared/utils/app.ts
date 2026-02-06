@@ -3,8 +3,9 @@ import moment from 'moment';
 import type { Movie } from "../types/movie";
 import type { Showing } from "../types/showing";
 import { getImdbData } from './imdb';
+import { get_poster_url } from './tmdb_poster';
 
-export async function processData(data: any): Promise<Movie[]> {
+export async function processData(data: any, tmdbApiKey?: string): Promise<Movie[]> {
     // Perform any further processing or rendering with the transformed data
     let movies: Record<number, Movie> = {}
     let imdbPromises: Promise<void>[] = []
@@ -37,10 +38,22 @@ export async function processData(data: any): Promise<Movie[]> {
 
             if (!(id in movies)) {
 
-                let poster_uri = data_movie.content?.field_poster?.field_media_image?.img_element?.uri
-                if (poster_uri == undefined) {
-                    poster_uri = "https://api.kino.dk/sites/kino.dk/files/styles/isg_focal_point_348_522/public/2023-05/Kino-fallback-poster.webp?h=6c02f54b&itok=14CuSSHm"
+                let poster_uri : string = data_movie.content?.field_poster?.field_media_image?.img_element?.uri
+                if(poster_uri != undefined && poster_uri.includes("no-boost-poster")  && tmdbApiKey){
+                    poster_uri = await get_poster_url(data_movie.content.field_imdb, tmdbApiKey)
+                } else if(poster_uri != undefined && poster_uri.includes("Kino-fallback-poster")  && tmdbApiKey){
+                    poster_uri = await get_poster_url(data_movie.content.field_imdb, tmdbApiKey)
+                } else if(poster_uri != undefined && poster_uri.includes("plakat-paa-vej")  && tmdbApiKey){
+                    poster_uri = await get_poster_url(data_movie.content.field_imdb, tmdbApiKey)
+                } else if((poster_uri == undefined || poster_uri == "") && tmdbApiKey && data_movie.content.field_imdb){
+                    // No poster available from original source, try TMDB
+                    poster_uri = await get_poster_url(data_movie.content.field_imdb, tmdbApiKey)
                 }
+
+                if (poster_uri == undefined || poster_uri == "") {
+                    poster_uri = "https://api.kino.dk/sites/kino.dk/files/styles/isg_focal_point_356_534/public/2023-05/Kino-fallback-poster.webp?h=6c02f54b&itok=efsQLlFH"
+                }
+
                 movies[id] = {
                     title: title,
                     imdb_link: imdb_link,
@@ -59,7 +72,7 @@ export async function processData(data: any): Promise<Movie[]> {
                             movies[id].imdb_rating = imdbData.rating;
                             
                             // Update release date with IMDB data if available and more accurate
-                            if (imdbData.datePublished) {
+                            if (imdbData.datePublished && release_date.year() == 1900) {
                                 const imdbDate = moment(imdbData.datePublished, 'YYYY-MM-DD');
                                 if (imdbDate.isValid()) {
                                     movies[id].release_date = imdbDate.toISOString();

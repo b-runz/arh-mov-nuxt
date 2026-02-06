@@ -6,13 +6,6 @@ export interface ImdbData {
 const IMDB_JSON_REGEX = /<script type="application\/ld\+json">(.*?)<\/script>/;
 
 export async function getImdbData(tt: string): Promise<ImdbData> {
-    if(tt.length < 10 || tt.length > 10){
-        return {
-            rating: "?",
-            datePublished: ""
-        }
-    }
-
     console.log('Fetching IMDB data for:', tt);
     const imdbUrl = `https://www.imdb.com/title/${tt}/`;
 

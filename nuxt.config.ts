@@ -16,5 +16,8 @@ export default defineNuxtConfig({
   },
   experimental: {
     payloadExtraction: false
+  },
+  runtimeConfig: {
+    tmdbApiKey: process.env.TMDB_READ_TOKEN
   }
 })
