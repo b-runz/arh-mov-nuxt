@@ -2,12 +2,12 @@
 import moment from 'moment';
 import type { Movie } from "../types/movie";
 import type { Showing } from "../types/showing";
-import { getRating } from './imdb';
+import { getImdbData } from './imdb';
 
 export async function processData(data: any): Promise<Movie[]> {
     // Perform any further processing or rendering with the transformed data
     let movies: Record<number, Movie> = {}
-    let promises = []
+    let imdbPromises: Promise<void>[] = []
     moment.locale("da")
 
     let data_cinemas = data['content']['content']['content']
@@ -35,8 +35,6 @@ export async function processData(data: any): Promise<Movie[]> {
                 imdb_link = data_movie.content.field_imdb;
             }
 
-            let imdb_rating: string = await getRating(imdb_link);
-
             if (!(id in movies)) {
 
                 let poster_uri = data_movie.content?.field_poster?.field_media_image?.img_element?.uri
@@ -46,12 +44,34 @@ export async function processData(data: any): Promise<Movie[]> {
                 movies[id] = {
                     title: title,
                     imdb_link: imdb_link,
-                    imdb_rating: imdb_rating,
+                    imdb_rating: '?', // Will be updated by IMDB promise
                     cinemas: {},
                     id: createUrlSlug(title),
                     poster: poster_uri,
                     release_date: release_date.toISOString(),
                     display_release_date: release_date.locale("en").format('DD. MMM. YYYY')
+                }
+                
+                // Add IMDB data fetching promise for multithreading
+                if (imdb_link) {
+                    const imdbPromise = getImdbData(imdb_link).then(imdbData => {
+                        if (movies[id]) {
+                            movies[id].imdb_rating = imdbData.rating;
+                            
+                            // Update release date with IMDB data if available and more accurate
+                            if (imdbData.datePublished) {
+                                const imdbDate = moment(imdbData.datePublished, 'YYYY-MM-DD');
+                                if (imdbDate.isValid()) {
+                                    movies[id].release_date = imdbDate.toISOString();
+                                    movies[id].display_release_date = formatDisplayDate(imdbDate);
+                                }
+                            }
+                        }
+                    }).catch(error => {
+                        console.warn(`Failed to fetch IMDB data for ${imdb_link}:`, error);
+                    });
+                    
+                    imdbPromises.push(imdbPromise);
                 }
             }
             let showings: Record<string, Showing[]> = {}
@@ -111,6 +131,10 @@ export async function processData(data: any): Promise<Movie[]> {
 
         }
     }
+    
+    // Wait for all IMDB data to be fetched
+    await Promise.all(imdbPromises);
+    
     return sortMoviesByPremiereDate(movies);
 }
 
@@ -136,6 +160,11 @@ function sortMoviesByPremiereDate(movies: Record<number, Movie>): Movie[] {
 
     // Merge sorted arrays into one
     return [...beforeNow, ...afterNow];
+}
+
+function formatDisplayDate(date: moment.Moment): string {
+    // Format as "01 March 2025"
+    return date.locale("en").format('DD MMMM YYYY');
 }
 
 function createUrlSlug(title: string): string {

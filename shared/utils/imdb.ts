@@ -1,48 +1,65 @@
-import * as cheerio from 'cheerio';
-
-export interface RatingData {
+export interface ImdbData {
     rating: string;
+    datePublished: string;
 }
 
-// Track the last call time to implement rate limiting
-let lastCallTime = 0;
-const RATE_LIMIT_DELAY = 500; // 500ms delay between calls
+const IMDB_JSON_REGEX = /<script type="application\/ld\+json">(.*?)<\/script>/;
 
-// Helper function to wait for a specified amount of time
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-export async function getRating(tt: string): Promise<string> {
-    console.log('Fetching rating for:', tt);
-    // Implement rate limiting
-    const now = Date.now();
-    const timeSinceLastCall = now - lastCallTime;
-    
-    if (timeSinceLastCall < RATE_LIMIT_DELAY) {
-        const waitTime = RATE_LIMIT_DELAY - timeSinceLastCall;
-        await sleep(waitTime);
+export async function getImdbData(tt: string): Promise<ImdbData> {
+    if(tt.length < 10 || tt.length > 10){
+        return {
+            rating: "?",
+            datePublished: ""
+        }
     }
-    
-    lastCallTime = Date.now();
-    const imdbUrl = `https://m.imdb.com/title/${tt}/`;
+
+    console.log('Fetching IMDB data for:', tt);
+    const imdbUrl = `https://www.imdb.com/title/${tt}/`;
 
     try {
         const html = await makeHttpsRequest(imdbUrl);
-        
-        const $ = cheerio.load(html);
-        const rating = $('div[data-testid="hero-rating-bar__aggregate-rating__score"]:first span:nth-child(1)').text();
-        
-        console.log('Extracted rating:', rating.trim() || 'Not found');
-        return rating.trim() || '?';
+
+        // Parse IMDB JSON from HTML
+        const match = html.match(IMDB_JSON_REGEX);
+        if (!match) {
+            console.warn(`No JSON-LD found for ${tt}`);
+            return { rating: '?', datePublished: '' };
+        }
+
+        const jsonStr = match[1];
+        if (!jsonStr) {
+            console.warn(`Empty JSON-LD content for ${tt}`);
+            return { rating: '?', datePublished: '' };
+        }
+        const imdbJson = JSON.parse(jsonStr);
+
+        // Extract rating value
+        const aggregateRating = imdbJson.aggregateRating || {};
+        const rating = aggregateRating.ratingValue?.toString() || '?';
+
+        // Extract date published
+        const datePublished = imdbJson.datePublished || '';
+
+        console.log('Extracted rating:', rating, 'Date:', datePublished);
+        return { rating, datePublished };
+
     } catch (error: any) {
         // Handle 404 errors specifically
         if (error?.status === 404 || error?.statusCode === 404) {
             console.warn(`IMDB page not found for ${tt} (404)`);
-            return '?';
+            return { rating: '?', datePublished: '' };
         }
-        
-        console.warn(`Failed to fetch IMDB rating for ${tt}:`, error.message);
-        return '?';
+
+        console.warn(`Failed to fetch IMDB data for ${tt}:`, error.message);
+        return { rating: '?', datePublished: '' };
     }
+}
+
+// Backwards compatibility function
+export async function getRating(tt: string): Promise<string> {
+    const data = await getImdbData(tt);
+    return data.rating;
+}
 
 // Helper function to make HTTPS requests with proper headers
 async function makeHttpsRequest(url: string): Promise<string> {
@@ -50,16 +67,15 @@ async function makeHttpsRequest(url: string): Promise<string> {
         const response = await $fetch<string>(url, {
             method: 'GET',
             headers: {
-                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36',
+                'Accept': 'application/json'
             },
             // Ensure we get the raw response as text
             parseResponse: (txt) => txt,
             // Handle different response types
             responseType: 'text'
         });
-        
+
         return response;
     } catch (error: any) {
         // $fetch throws errors for HTTP error statuses
@@ -68,8 +84,4 @@ async function makeHttpsRequest(url: string): Promise<string> {
         }
         throw error;
     }
-}
-
-
-    // return "?"
 }
