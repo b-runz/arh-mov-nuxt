@@ -2,7 +2,7 @@
 import moment from 'moment';
 import type { Movie } from "../types/movie";
 import type { Showing } from "../types/showing";
-import { getImdbData } from './imdb';
+import { getImdbData, advanced_title_finder } from './imdb';
 import { get_poster_url } from './tmdb_poster';
 
 export async function processData(data: any, tmdbApiKey?: string): Promise<Movie[]> {
@@ -38,14 +38,14 @@ export async function processData(data: any, tmdbApiKey?: string): Promise<Movie
 
             if (!(id in movies)) {
 
-                let poster_uri : string = data_movie.content?.field_poster?.field_media_image?.img_element?.uri
-                if(poster_uri != undefined && poster_uri.includes("no-boost-poster")  && tmdbApiKey){
+                let poster_uri: string = data_movie.content?.field_poster?.field_media_image?.img_element?.uri
+                if (poster_uri != undefined && poster_uri.includes("no-boost-poster") && tmdbApiKey) {
                     poster_uri = await get_poster_url(data_movie.content.field_imdb, tmdbApiKey)
-                } else if(poster_uri != undefined && poster_uri.includes("Kino-fallback-poster")  && tmdbApiKey){
+                } else if (poster_uri != undefined && poster_uri.includes("Kino-fallback-poster") && tmdbApiKey) {
                     poster_uri = await get_poster_url(data_movie.content.field_imdb, tmdbApiKey)
-                } else if(poster_uri != undefined && poster_uri.includes("plakat-paa-vej")  && tmdbApiKey){
+                } else if (poster_uri != undefined && poster_uri.includes("plakat-paa-vej") && tmdbApiKey) {
                     poster_uri = await get_poster_url(data_movie.content.field_imdb, tmdbApiKey)
-                } else if((poster_uri == undefined || poster_uri == "") && tmdbApiKey && data_movie.content.field_imdb){
+                } else if ((poster_uri == undefined || poster_uri == "") && tmdbApiKey && data_movie.content.field_imdb) {
                     // No poster available from original source, try TMDB
                     poster_uri = await get_poster_url(data_movie.content.field_imdb, tmdbApiKey)
                 }
@@ -64,13 +64,37 @@ export async function processData(data: any, tmdbApiKey?: string): Promise<Movie
                     release_date: release_date.toISOString(),
                     display_release_date: release_date.locale("en").format('DD. MMM. YYYY')
                 }
-                
+
                 // Add IMDB data fetching promise for multithreading
                 if (imdb_link) {
-                    const imdbPromise = getImdbData(imdb_link).then(imdbData => {
+                    const imdbPromise = getImdbData(imdb_link).then(async imdbData => {
                         if (movies[id]) {
                             movies[id].imdb_rating = imdbData.rating;
-                            
+
+                            // If IMDB rating is "?", try TMDB fallback
+                            if (imdbData.rating === '?' && tmdbApiKey) {
+                                try {
+                                    const titleSearchResult = await advanced_title_finder(title);
+
+                                    const fallbackImdbData = await getImdbData(titleSearchResult.id);
+                                    if (fallbackImdbData.rating !== '?') {
+                                        movies[id].imdb_rating = fallbackImdbData.rating;
+                                        movies[id].imdb_link = titleSearchResult.id;
+                                        imdbData = fallbackImdbData;
+                                    }
+
+                                    // Use TMDB poster if it's a fallback poster and TMDB has one
+                                    if (poster_uri.includes("no-boost-poster") ||
+                                        poster_uri.includes("Kino-fallback-poster") ||
+                                        poster_uri.includes("plakat-paa-vej") ||
+                                        poster_uri.includes("fallback-poster")) {
+                                        movies[id].poster = await get_poster_url(titleSearchResult.id, tmdbApiKey);
+                                    }
+                                } catch (error) {
+                                    //console.warn(`Failed to fetch TMDB fallback data for "${title}":`, error);
+                                }
+                            }
+
                             // Update release date with IMDB data if available and more accurate
                             if (imdbData.datePublished && release_date.year() == 1900) {
                                 const imdbDate = moment(imdbData.datePublished, 'YYYY-MM-DD');
@@ -81,9 +105,38 @@ export async function processData(data: any, tmdbApiKey?: string): Promise<Movie
                             }
                         }
                     }).catch(error => {
-                        console.warn(`Failed to fetch IMDB data for ${imdb_link}:`, error);
+                        //console.warn(`Failed to fetch IMDB data for ${imdb_link}:`, error);
                     });
-                    
+
+                    imdbPromises.push(imdbPromise);
+                } else {
+                    const imdbPromise = advanced_title_finder(title).then(async titleSearchResult => {
+                        if (titleSearchResult.id !== "?") {
+                            const imdbData = await getImdbData(titleSearchResult.id);
+                            if (movies[id]) {
+                                movies[id].imdb_rating = imdbData.rating;
+                                const imdbDate = moment(imdbData.datePublished, 'YYYY-MM-DD');
+                                if (imdbDate.isValid()) {
+                                    movies[id].release_date = imdbDate.toISOString();
+                                    movies[id].display_release_date = formatDisplayDate(imdbDate);
+                                }
+                                movies[id].imdb_link = titleSearchResult.id
+
+                                if (poster_uri.includes("no-boost-poster") ||
+                                    poster_uri.includes("Kino-fallback-poster") ||
+                                    poster_uri.includes("plakat-paa-vej") ||
+                                    poster_uri.includes("fallback-poster")) {
+                                    movies[id].poster = await get_poster_url(titleSearchResult.id, tmdbApiKey!);
+
+                                    if(movies[id].poster == ""){
+                                        movies[id].poster = "https://api.kino.dk/sites/kino.dk/files/styles/isg_focal_point_356_534/public/2023-05/Kino-fallback-poster.webp?h=6c02f54b&itok=efsQLlFH"
+                                    }
+                                }
+                            }
+                        }
+                    }).catch(error => {
+                        // Handle errors silently to prevent blocking
+                    });
                     imdbPromises.push(imdbPromise);
                 }
             }
@@ -144,10 +197,10 @@ export async function processData(data: any, tmdbApiKey?: string): Promise<Movie
 
         }
     }
-    
+
     // Wait for all IMDB data to be fetched
     await Promise.all(imdbPromises);
-    
+
     return sortMoviesByPremiereDate(movies);
 }
 
@@ -159,12 +212,12 @@ function sortMoviesByPremiereDate(movies: Record<number, Movie>): Movie[] {
     const afterNow: Movie[] = [];
 
     Object.values(movies).forEach(movie => {
-      const releaseDate = new Date(movie.release_date);
-      if (releaseDate < now) {
-        beforeNow.push(movie);
-      } else {
-        afterNow.push(movie);
-      }
+        const releaseDate = new Date(movie.release_date);
+        if (releaseDate < now) {
+            beforeNow.push(movie);
+        } else {
+            afterNow.push(movie);
+        }
     });
 
     // Sort both arrays by release date (most recent first)
