@@ -7,7 +7,7 @@ import { get_poster_url } from './tmdb_poster';
 
 export async function processData(data: any, tmdbApiKey?: string): Promise<Movie[]> {
     // Perform any further processing or rendering with the transformed data
-    let movies: Record<number, Movie> = {}
+    let movies: Record<string, Movie> = {}
     let imdbPromises: Promise<void>[] = []
     moment.locale("da")
 
