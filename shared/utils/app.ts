@@ -18,7 +18,6 @@ export async function processData(data: any, tmdbApiKey?: string): Promise<Movie
 
         for (let data_movie of data_cinema['movies']) {
 
-            let id = data_movie['id']
             let title: string = "";
             if ("label" in data_movie.content) {
                 title = data_movie.content.label;
@@ -26,6 +25,7 @@ export async function processData(data: any, tmdbApiKey?: string): Promise<Movie
             if (title == "") {
                 continue;
             }
+            let id = title
             let release_date = moment('1900-01-01', 'YYYY-MM-DD')
             if ("field_premiere" in data_movie.content && data_movie.content.field_premiere) {
                 release_date = moment(data_movie.content.field_premiere, 'D. MMM YYYY');
