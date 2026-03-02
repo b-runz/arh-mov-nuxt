@@ -2,7 +2,7 @@
 import moment from 'moment';
 import type { Movie } from "../types/movie";
 import type { Showing } from "../types/showing";
-import { getImdbData, advanced_title_finder } from './imdb';
+import { advanced_title_finder, getRating } from './imdb';
 import { get_poster_url } from './tmdb_poster';
 
 export async function processData(data: any, tmdbApiKey?: string): Promise<Movie[]> {
@@ -67,7 +67,7 @@ export async function processData(data: any, tmdbApiKey?: string): Promise<Movie
 
                 // Add IMDB data fetching promise for multithreading
                 if (imdb_link) {
-                    const imdbPromise = getImdbData(imdb_link).then(async imdbData => {
+                    const imdbPromise = getRating(imdb_link).then(async imdbData => {
                         if (movies[id]) {
                             movies[id].imdb_rating = imdbData.rating;
 
@@ -76,7 +76,7 @@ export async function processData(data: any, tmdbApiKey?: string): Promise<Movie
                                 try {
                                     const titleSearchResult = await advanced_title_finder(title);
 
-                                    const fallbackImdbData = await getImdbData(titleSearchResult.id);
+                                    const fallbackImdbData = await getRating(titleSearchResult.id);
                                     if (fallbackImdbData.rating !== '?') {
                                         movies[id].imdb_rating = fallbackImdbData.rating;
                                         movies[id].imdb_link = titleSearchResult.id;
@@ -112,7 +112,7 @@ export async function processData(data: any, tmdbApiKey?: string): Promise<Movie
                 } else {
                     const imdbPromise = advanced_title_finder(title).then(async titleSearchResult => {
                         if (titleSearchResult.id !== "?") {
-                            const imdbData = await getImdbData(titleSearchResult.id);
+                            const imdbData = await getRating(titleSearchResult.id);
                             if (movies[id]) {
                                 movies[id].imdb_rating = imdbData.rating;
                                 const imdbDate = moment(imdbData.datePublished, 'YYYY-MM-DD');
