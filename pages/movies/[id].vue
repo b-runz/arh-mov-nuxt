@@ -1,20 +1,18 @@
 <script setup lang="ts">
 import { useMovies } from '~/composables/useMovies';
 import type { Movie } from '../../shared/types/movie';
+import type { FilterState } from '../../components/MovieFilters.vue';
 
 const route = useRoute();
 const movieId = route.params.id as string;
 
-// Use the same composable to get movies data (will be cached/shared)
 const movies = await useMovies();
 
-// Find the specific movie by ID
 const movie = computed(() => {
   if (!movies.value) return null;
   return movies.value.find((m: Movie) => m.id === movieId);
 });
 
-// Set page title dynamically based on movie title
 watchEffect(() => {
   if (movie.value) {
     useHead({
@@ -29,7 +27,6 @@ watchEffect(() => {
   }
 });
 
-// Scroll to top when component mounts
 onMounted(() => {
   window.scrollTo({
     top: 0,
@@ -37,6 +34,8 @@ onMounted(() => {
     behavior: 'instant',
   });
 });
+
+const filter = ref<FilterState>({});
 </script>
 
 <template>
@@ -57,7 +56,7 @@ onMounted(() => {
           <div class="w-24 sm:w-28 md:w-1/4 flex-shrink-0">
             <img :src="movie.poster" class="w-full h-auto rounded shadow-lg" alt="Movie Poster">
           </div>
-          
+
           <!-- Content -->
           <div class="flex-1 min-w-0">
             <p class="mb-2">
@@ -65,21 +64,23 @@ onMounted(() => {
                 Rating: {{ movie.imdb_rating }}
               </a>
             </p>
-            <p class="mb-4 md:mb-6">Release Date: {{ movie.display_release_date }}</p>
-            
+            <p class="mb-1">Release Date: {{ movie.display_release_date }}</p>
+
+            <!-- Filters -->
+            <MovieFilters :cinemas="movie.cinemas" @update:filter="filter = $event" />
+
             <!-- Cinema showings - next to poster on desktop, below on mobile -->
-            <div class="hidden md:block">
-              <CinemaShowing :cinemas="movie.cinemas" />
+            <div class="hidden md:block mt-4">
+              <CinemaShowing :cinemas="movie.cinemas" :filter="filter" />
             </div>
           </div>
         </div>
-        
+
         <!-- Cinema showings - displayed below poster on mobile only -->
         <div class="mt-4 md:hidden">
-          <CinemaShowing :cinemas="movie.cinemas" />
+          <CinemaShowing :cinemas="movie.cinemas" :filter="filter" />
         </div>
       </div>
     </div>
   </div>
 </template>
-
