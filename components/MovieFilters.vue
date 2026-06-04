@@ -15,6 +15,7 @@ const emit = defineEmits<{
   'update:filter': [FilterState]
 }>()
 
+const showFilters = ref(false)
 const activePicker = ref<'date' | 'range' | 'cinemas' | null>(null)
 const selectedDate = ref('')
 const rangeFrom = ref('')
@@ -128,65 +129,77 @@ onMounted(() => {
 
 <template>
   <div class="mt-3 text-sm">
-    <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-gray-300">
-
-      <!-- Date filter -->
-      <span v-if="hasDate" class="flex items-center gap-1">
+    <div class="flex flex-col items-start gap-1.5 text-gray-300">
+      <!-- Toggle Filters -->
+      <span class="flex items-center gap-1">
         <button
+          @click="showFilters = !showFilters"
+          class="text-orange-400 hover:text-orange-300 transition-colors underline underline-offset-2"
+        >filters</button>
+        <button
+          v-if="showFilters"
+          @click="showFilters = false; activePicker = null"
+          class="text-gray-500 hover:text-white transition-colors leading-none px-0.5"
+          aria-label="Close filters"
+        >×</button>
+      </span>
+
+      <!-- Filters Container -->
+      <template v-if="showFilters">
+        <!-- Date filter -->
+        <span v-if="hasDate" class="flex items-center gap-1">
+          <button
+            @click="togglePicker('date')"
+            class="text-orange-400 hover:text-orange-300 transition-colors"
+          >date: {{ dateLabel }}</button>
+          <button
+            @click="clearDate"
+            class="text-gray-500 hover:text-white transition-colors leading-none px-0.5"
+            aria-label="Clear date filter"
+          >×</button>
+        </span>
+        <button
+          v-else
           @click="togglePicker('date')"
-          class="text-orange-400 hover:text-orange-300 transition-colors"
-        >date: {{ dateLabel }}</button>
-        <button
-          @click="clearDate"
-          class="text-gray-500 hover:text-white transition-colors leading-none px-0.5"
-          aria-label="Clear date filter"
-        >×</button>
-      </span>
-      <button
-        v-else
-        @click="togglePicker('date')"
-        :class="['transition-colors underline underline-offset-2', activePicker === 'date' ? 'text-orange-300' : 'text-orange-400 hover:text-orange-300']"
-      >select date</button>
+          :class="['transition-colors underline underline-offset-2', activePicker === 'date' ? 'text-orange-300' : 'text-orange-400 hover:text-orange-300']"
+        >select date</button>
 
-      <span class="text-gray-600">·</span>
-
-      <!-- Range filter -->
-      <span v-if="hasRange" class="flex items-center gap-1">
+        <!-- Range filter -->
+        <span v-if="hasRange" class="flex items-center gap-1">
+          <button
+            @click="togglePicker('range')"
+            class="text-orange-400 hover:text-orange-300 transition-colors"
+          >range: {{ rangeLabel }}</button>
+          <button
+            @click="clearRange"
+            class="text-gray-500 hover:text-white transition-colors leading-none px-0.5"
+            aria-label="Clear range filter"
+          >×</button>
+        </span>
         <button
+          v-else
           @click="togglePicker('range')"
-          class="text-orange-400 hover:text-orange-300 transition-colors"
-        >range: {{ rangeLabel }}</button>
-        <button
-          @click="clearRange"
-          class="text-gray-500 hover:text-white transition-colors leading-none px-0.5"
-          aria-label="Clear range filter"
-        >×</button>
-      </span>
-      <button
-        v-else
-        @click="togglePicker('range')"
-        :class="['transition-colors underline underline-offset-2', activePicker === 'range' ? 'text-orange-300' : 'text-orange-400 hover:text-orange-300']"
-      >select date range</button>
+          :class="['transition-colors underline underline-offset-2', activePicker === 'range' ? 'text-orange-300' : 'text-orange-400 hover:text-orange-300']"
+        >select date range</button>
 
-      <span class="text-gray-600">·</span>
-
-      <!-- Cinema filter -->
-      <span v-if="hasCinemas" class="flex items-center gap-1">
+        <!-- Cinema filter -->
+        <span v-if="hasCinemas" class="flex items-center gap-1">
+          <button
+            @click="togglePicker('cinemas')"
+            class="text-orange-400 hover:text-orange-300 transition-colors"
+          >cinemas: {{ cinemasLabel }}</button>
+          <button
+            @click="clearCinemas"
+            class="text-gray-500 hover:text-white transition-colors leading-none px-0.5"
+            aria-label="Clear cinema filter"
+          >×</button>
+        </span>
         <button
+          v-else
           @click="togglePicker('cinemas')"
-          class="text-orange-400 hover:text-orange-300 transition-colors"
-        >cinemas: {{ cinemasLabel }}</button>
-        <button
-          @click="clearCinemas"
-          class="text-gray-500 hover:text-white transition-colors leading-none px-0.5"
-          aria-label="Clear cinema filter"
-        >×</button>
-      </span>
-      <button
-        v-else
-        @click="togglePicker('cinemas')"
-        :class="['transition-colors underline underline-offset-2', activePicker === 'cinemas' ? 'text-orange-300' : 'text-orange-400 hover:text-orange-300']"
-      >select cinemas</button>
+          :class="['transition-colors underline underline-offset-2', activePicker === 'cinemas' ? 'text-orange-300' : 'text-orange-400 hover:text-orange-300']"
+        >select cinemas</button>
+      </template>
     </div>
 
     <!-- Date picker -->
