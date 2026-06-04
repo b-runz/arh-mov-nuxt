@@ -133,7 +133,7 @@ onMounted(() => {
       <!-- Toggle Filters -->
       <span class="flex items-center gap-1">
         <button
-          @click="showFilters = !showFilters"
+          @click="showFilters = !showFilters; if (!showFilters) activePicker = null"
           class="text-orange-400 hover:text-orange-300 transition-colors underline underline-offset-2"
         >filters</button>
         <button
