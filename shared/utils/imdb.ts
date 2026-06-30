@@ -4,11 +4,19 @@ export interface ImdbData {
 }
 
 export async function getRating(tt: string): Promise<ImdbData> {
-    const response = await makeHttpsRequest("https://graphql.imdb.com/", `{"query": "query {title(id:\\"${tt}\\") {ratingsSummary {aggregateRating} releaseDate {day month year}}}"}`);
-    return {
-        rating: response.data.title.ratingsSummary.aggregateRating.toString(),
-        datePublished: `${response.data.title.releaseDate.year}-${response.data.title.releaseDate.month}-${response.data.title.releaseDate.day}`
-    };
+    try {
+        const response = await makeHttpsRequest("https://graphql.imdb.com/", `{"query": "query {title(id:\\"${tt}\\") {ratingsSummary {aggregateRating} releaseDate {day month year}}}"}`);
+        const title = response.data?.title;
+        if (!title) return { rating: '?', datePublished: '' };
+        return {
+            rating: title.ratingsSummary?.aggregateRating?.toString() ?? '?',
+            datePublished: title.releaseDate
+                ? `${title.releaseDate.year}-${title.releaseDate.month}-${title.releaseDate.day}`
+                : ''
+        };
+    } catch {
+        return { rating: '?', datePublished: '' };
+    }
 }
 
 type ImdbRatingResponse = {
