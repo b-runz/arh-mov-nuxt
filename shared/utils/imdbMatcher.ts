@@ -128,6 +128,15 @@ function normalizeCountry(name: string): string {
 export function normalizeTitle(s: string): string {
   return s
     .toLowerCase()
+    // Danish/Norwegian æ, ø, å are distinct letters, not base+diacritic, so
+    // NFKD doesn't decompose them the way it does é/ö/ñ -- without this they
+    // fall through to the "strip anything non-alphanumeric" step below and
+    // become word-breaking spaces instead of the letters they stand for
+    // (e.g. "Troløs" -> "trol s" instead of "trolos"), which silently zeroes
+    // out title-similarity against any transliterated/foreign spelling.
+    .replace(/æ/g, "ae")
+    .replace(/ø/g, "o")
+    .replace(/å/g, "a")
     .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "")
     .replace(/[^a-z0-9]+/g, " ")
@@ -174,7 +183,14 @@ function popularityBonus(rank: number | null | undefined): number {
   return 0;
 }
 
-const NON_THEATRICAL_TYPES = new Set(["TV Episode", "TV Series", "Video", "Podcast Episode", "Podcast Series", "Video Game", "Music Video"]);
+// "Short" is included here too: a bare short film is rarely what's actually
+// programmed under its own listing at a cinema, but its title is often a
+// generic/common phrase (more collision-prone than a feature's) -- without
+// this, a short that happens to share a Kino title's exact string can hit a
+// "perfect" title-similarity score and win purely on a coincidence, crowding
+// out the real (often less literally-matching, e.g. foreign-titled) feature
+// before enrichment fallbacks in resolveImdbId even get a chance to run.
+const NON_THEATRICAL_TYPES = new Set(["TV Episode", "TV Series", "Video", "Podcast Episode", "Podcast Series", "Video Game", "Music Video", "Short"]);
 
 // Below this many scheduled showtimes, a listing could plausibly be a
 // one-off cinematheque/classic rerun (verified: real reruns in this data
@@ -298,7 +314,14 @@ async function tmdbCandidates(movie: KinoMovieInput, token: string): Promise<Can
     year: d.release_date ? new Date(d.release_date).getFullYear() : null,
     countries: d.production_countries.map((c) => c.name),
     runtimeMinutes: d.runtime || null,
-    typeText: "Movie", // /search/movie only returns movies
+    // TMDB's /search/movie catalog isn't purely theatrical features -- it
+    // also surfaces direct-to-video/obscure B-catalog titles that IMDb
+    // itself classifies as e.g. "Video", not "Movie" (verified: TMDB's own
+    // `video` flag doesn't reliably flag these either). Crediting every hit
+    // here as a confirmed theatrical movie let one such title win purely on
+    // an unearned +8, so leave it unknown/neutral and let the other,
+    // correctly-labeled sources supply the type signal.
+    typeText: null,
     posterPath: d.poster_path,
   }));
 }
