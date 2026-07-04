@@ -1,9 +1,63 @@
 
 import moment from 'moment';
 import type { Movie } from "../types/movie";
-import type { Showing } from "../types/showing";
-import { advanced_title_finder, getRating } from './imdb';
+import { getRating } from './imdb';
+import { resolveImdbId, type KinoMovieInput } from './imdbMatcher';
 import { get_poster_url } from './tmdb_poster';
+
+interface ApiShow {
+    theaterName: string;
+    theaterId: number;
+    showStart: string;
+    ticketSaleUrl: string;
+}
+
+interface ApiMovie {
+    title: string;
+    titleOriginal: string;
+    mainVersionId: string;
+    premiere: string;
+    productionYear: string;
+    nationalities: string[];
+    lengthInMinutes: number;
+    sanityImagePosterUrl: string;
+    shows: ApiShow[];
+}
+
+function parseReleaseDate(premiere: string): moment.Moment {
+    if (!premiere || premiere.startsWith('0001')) {
+        return moment('1900-01-01', 'YYYY-MM-DD');
+    }
+    const date = moment(premiere);
+    return date.isValid() ? date : moment('1900-01-01', 'YYYY-MM-DD');
+}
+
+function buildKinoMovieInput(apiMovie: ApiMovie, releaseDate: moment.Moment): KinoMovieInput {
+    return {
+        title: apiMovie.title,
+        titleOriginal: apiMovie.titleOriginal || undefined,
+        premiere: releaseDate.isValid() && releaseDate.year() !== 1900 ? releaseDate.toISOString() : undefined,
+        productionYear: apiMovie.productionYear || undefined,
+        nationalities: apiMovie.nationalities?.length ? apiMovie.nationalities : undefined,
+        lengthInMinutes: apiMovie.lengthInMinutes || undefined,
+        showCount: apiMovie.shows?.length,
+    };
+}
+
+// Sanity serves the same placeholder image for every movie that doesn't
+// have a real poster yet, but the placeholder's URL isn't a fixed constant
+// we can hardcode (it's just whatever asset the CMS happens to use). A real
+// poster is unique to its movie, so any sanityImagePosterUrl shared by 2+
+// movies in the same batch is a placeholder, not an actual poster.
+function findSharedPosterUrls(apiMovies: ApiMovie[]): Set<string> {
+    const counts = new Map<string, number>();
+    for (const apiMovie of apiMovies) {
+        if (apiMovie.sanityImagePosterUrl) {
+            counts.set(apiMovie.sanityImagePosterUrl, (counts.get(apiMovie.sanityImagePosterUrl) ?? 0) + 1);
+        }
+    }
+    return new Set([...counts.entries()].filter(([, count]) => count > 1).map(([url]) => url));
+}
 
 export async function processData(data: any, tmdbApiKey?: string): Promise<Movie[]> {
     // Perform any further processing or rendering with the transformed data
@@ -11,190 +65,85 @@ export async function processData(data: any, tmdbApiKey?: string): Promise<Movie
     let imdbPromises: Promise<void>[] = []
     moment.locale("da")
 
-    let data_cinemas = data['content']['content']['content']
-    for (let data_cinema of data_cinemas) {
-        let data_cinema_id = data_cinema['id']
-        let data_cinema_name = data_cinema['content']['label']
+    const apiMovies: ApiMovie[] = data?.data?.movieQuery?.getCurrentMovies ?? []
+    const sharedPosterUrls = findSharedPosterUrls(apiMovies)
 
-        for (let data_movie of data_cinema['movies']) {
+    for (const apiMovie of apiMovies) {
+        const title = apiMovie.title
+        if (!title) continue
 
-            let title: string = "";
-            if ("label" in data_movie.content) {
-                title = data_movie.content.label;
+        const id = createUrlSlug(title)
+        const release_date = parseReleaseDate(apiMovie.premiere)
+
+        if (!(id in movies)) {
+            const isPlaceholderPoster = !apiMovie.sanityImagePosterUrl || sharedPosterUrls.has(apiMovie.sanityImagePosterUrl)
+            // Empty string means "no real poster" -- the UI renders a
+            // title-card fallback for this instead of a placeholder image.
+            let poster_uri = isPlaceholderPoster ? '' : apiMovie.sanityImagePosterUrl
+
+            movies[id] = {
+                title: title,
+                imdb_link: '',
+                imdb_rating: '?', // Will be updated by IMDB promise
+                cinemas: {},
+                id: id,
+                poster: poster_uri,
+                release_date: release_date.toISOString(),
+                display_release_date: release_date.locale("en").format('DD. MMM. YYYY')
             }
-            if (title == "") {
-                continue;
-            }
-            let id = title
-            let release_date = moment('1900-01-01', 'YYYY-MM-DD')
-            if ("field_premiere" in data_movie.content && data_movie.content.field_premiere) {
-                release_date = moment(data_movie.content.field_premiere, 'D. MMM YYYY');
-            }
 
-            let imdb_link: string = "";
-            if ("field_imdb" in data_movie.content) {
-                imdb_link = data_movie.content.field_imdb;
-            }
+            // The GraphQL schedule API doesn't expose an IMDb id directly,
+            // so every movie is resolved through the matching algorithm.
+            const imdbPromise = resolveImdbId(buildKinoMovieInput(apiMovie, release_date), tmdbApiKey ?? "").then(async match => {
+                if (match && (match.confidence === 'high' || match.confidence === 'medium')) {
+                    const imdbData = await getRating(match.imdbId);
+                    if (movies[id]) {
+                        movies[id].imdb_rating = imdbData.rating;
+                        movies[id].imdb_link = match.imdbId;
 
-            if (!(id in movies)) {
-
-                let poster_uri: string = data_movie.content?.field_poster?.field_media_image?.img_element?.uri
-                if (poster_uri != undefined && poster_uri.includes("no-boost-poster") && tmdbApiKey) {
-                    poster_uri = await get_poster_url(data_movie.content.field_imdb, tmdbApiKey)
-                } else if (poster_uri != undefined && poster_uri.includes("Kino-fallback-poster") && tmdbApiKey) {
-                    poster_uri = await get_poster_url(data_movie.content.field_imdb, tmdbApiKey)
-                } else if (poster_uri != undefined && poster_uri.includes("plakat-paa-vej") && tmdbApiKey) {
-                    poster_uri = await get_poster_url(data_movie.content.field_imdb, tmdbApiKey)
-                } else if ((poster_uri == undefined || poster_uri == "") && tmdbApiKey && data_movie.content.field_imdb) {
-                    // No poster available from original source, try TMDB
-                    poster_uri = await get_poster_url(data_movie.content.field_imdb, tmdbApiKey)
-                }
-
-                if (poster_uri == undefined || poster_uri == "") {
-                    poster_uri = "https://api.kino.dk/sites/kino.dk/files/styles/isg_focal_point_356_534/public/2023-05/Kino-fallback-poster.webp?h=6c02f54b&itok=efsQLlFH"
-                }
-
-                movies[id] = {
-                    title: title,
-                    imdb_link: imdb_link,
-                    imdb_rating: '?', // Will be updated by IMDB promise
-                    cinemas: {},
-                    id: createUrlSlug(title),
-                    poster: poster_uri,
-                    release_date: release_date.toISOString(),
-                    display_release_date: release_date.locale("en").format('DD. MMM. YYYY')
-                }
-
-                // Add IMDB data fetching promise for multithreading
-                if (imdb_link) {
-                    const imdbPromise = getRating(imdb_link).then(async imdbData => {
-                        if (movies[id]) {
-                            movies[id].imdb_rating = imdbData.rating;
-
-                            // If IMDB rating is "?", try TMDB fallback
-                            if (imdbData.rating === '?' && tmdbApiKey) {
-                                try {
-                                    const titleSearchResult = await advanced_title_finder(title);
-
-                                    const fallbackImdbData = await getRating(titleSearchResult.id);
-                                    if (fallbackImdbData.rating !== '?') {
-                                        movies[id].imdb_rating = fallbackImdbData.rating;
-                                        movies[id].imdb_link = titleSearchResult.id;
-                                        imdbData = fallbackImdbData;
-                                    }
-
-                                    // Use TMDB poster if it's a fallback poster and TMDB has one
-                                    if (poster_uri.includes("no-boost-poster") ||
-                                        poster_uri.includes("Kino-fallback-poster") ||
-                                        poster_uri.includes("plakat-paa-vej") ||
-                                        poster_uri.includes("fallback-poster")) {
-                                        movies[id].poster = await get_poster_url(titleSearchResult.id, tmdbApiKey);
-                                    }
-                                } catch (error) {
-                                    //console.warn(`Failed to fetch TMDB fallback data for "${title}":`, error);
-                                }
-                            }
-
-                            // Update release date with IMDB data if available and more accurate
-                            if (imdbData.datePublished && release_date.year() == 1900) {
-                                const imdbDate = moment(imdbData.datePublished, 'YYYY-MM-DD');
-                                if (imdbDate.isValid()) {
-                                    movies[id].release_date = imdbDate.toISOString();
-                                    movies[id].display_release_date = formatDisplayDate(imdbDate);
-                                }
+                        if (imdbData.datePublished && release_date.year() == 1900) {
+                            const imdbDate = moment(imdbData.datePublished, 'YYYY-MM-DD');
+                            if (imdbDate.isValid()) {
+                                movies[id].release_date = imdbDate.toISOString();
+                                movies[id].display_release_date = formatDisplayDate(imdbDate);
                             }
                         }
-                    }).catch(error => {
-                        //console.warn(`Failed to fetch IMDB data for ${imdb_link}:`, error);
-                    });
 
-                    imdbPromises.push(imdbPromise);
-                } else {
-                    const imdbPromise = advanced_title_finder(title).then(async titleSearchResult => {
-                        if (titleSearchResult.id !== "?") {
-                            const imdbData = await getRating(titleSearchResult.id);
-                            if (movies[id]) {
-                                movies[id].imdb_rating = imdbData.rating;
-                                const imdbDate = moment(imdbData.datePublished, 'YYYY-MM-DD');
-                                if (imdbDate.isValid()) {
-                                    movies[id].release_date = imdbDate.toISOString();
-                                    movies[id].display_release_date = formatDisplayDate(imdbDate);
-                                }
-                                movies[id].imdb_link = titleSearchResult.id
-
-                                if (poster_uri.includes("no-boost-poster") ||
-                                    poster_uri.includes("Kino-fallback-poster") ||
-                                    poster_uri.includes("plakat-paa-vej") ||
-                                    poster_uri.includes("fallback-poster")) {
-                                    movies[id].poster = await get_poster_url(titleSearchResult.id, tmdbApiKey!);
-
-                                    if(movies[id].poster == ""){
-                                        movies[id].poster = "https://api.kino.dk/sites/kino.dk/files/styles/isg_focal_point_356_534/public/2023-05/Kino-fallback-poster.webp?h=6c02f54b&itok=efsQLlFH"
-                                    }
-                                }
+                        if (!movies[id].poster && tmdbApiKey) {
+                            // TMDB doesn't always cross-link its own entry to the
+                            // matched IMDb id, which makes the by-imdb-id lookup
+                            // come back empty even though TMDB has the movie --
+                            // fall back to the poster captured directly off the
+                            // title-search hit during matching in that case.
+                            const tmdbPoster = await get_poster_url(match.imdbId, tmdbApiKey) || match.tmdbPosterUrl;
+                            if (tmdbPoster) {
+                                movies[id].poster = tmdbPoster;
                             }
-                        }
-                    }).catch(error => {
-                        // Handle errors silently to prevent blocking
-                    });
-                    imdbPromises.push(imdbPromise);
-                }
-            }
-            let showings: Record<string, Showing[]> = {}
-
-            const noTextList = [
-                {
-                    'textToReplace': 'IMAX',
-                    'textToShow': 'IMAX'
-                },
-                {
-                    'textToReplace': '3D',
-                    'textToShow': '3D'
-                },
-                {
-                    'textToReplace': 'Dansk',
-                    'textToShow': 'Danish'
-                },
-                {
-                    'textToReplace': 'Engelsk',
-                    'textToShow': 'English'
-                }
-            ]
-
-            for (let data_version of data_movie['versions']) {
-                let appendText = ''
-                if ('label' in data_version) {
-                    for (let replaceTextLabel of noTextList) {
-                        if (data_version['label'].includes(replaceTextLabel['textToReplace'])) {
-                            appendText = ' - ' + replaceTextLabel['textToShow']
                         }
                     }
                 }
+            }).catch(error => {
+                //console.warn(`Failed to resolve IMDb data for "${title}":`, error);
+            });
 
-                for (let data_showing of data_version['dates']) {
-                    let date = data_showing['date']
-                    for (let data_time of data_showing['showtimes']) {
-                        if (!(date in showings)) {
-                            showings[date] = []
-                        }
-                        showings[date]?.push({
-                            link: "https://kino.dk/ticketflow/showtimes/" + data_time['id'],
-                            time: data_time['time'] + appendText
-                        })
-                    }
+            imdbPromises.push(imdbPromise);
+        }
+
+        const movie = movies[id]
+        if (movie) {
+            for (const show of apiMovie.shows ?? []) {
+                const date = show.showStart.slice(0, 10);
+                const time = show.showStart.slice(11, 16);
+
+                if (!movie.cinemas[show.theaterId]) {
+                    movie.cinemas[show.theaterId] = { id: show.theaterId, name: show.theaterName, showing: {} };
                 }
-            }
-
-
-            let movie = movies[id]
-            if (movie) {
-                movie.cinemas[data_cinema_id] = {
-                    name: data_cinema_name,
-                    id: data_cinema_id,
-                    showing: showings
+                const cinema = movie.cinemas[show.theaterId]!;
+                if (!cinema.showing[date]) {
+                    cinema.showing[date] = [];
                 }
+                cinema.showing[date]!.push({ time, link: show.ticketSaleUrl });
             }
-
         }
     }
 

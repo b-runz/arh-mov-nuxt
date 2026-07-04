@@ -80,7 +80,10 @@ const toggleCinemas = (movieId: string) => {
         <div class="flex flex-row md:flex-row gap-4">
           <!-- Poster -->
           <div class="w-24 sm:w-28 md:w-1/4 flex-shrink-0">
-            <img :src="movie.poster" class="w-full h-auto rounded" alt="Movie Poster">
+            <img v-if="movie.poster" :src="movie.poster" class="w-full h-auto rounded" alt="Movie Poster">
+            <div v-else class="w-full aspect-[2/3] rounded bg-gray-700 flex items-center justify-center p-2 text-center">
+              <span class="text-sm font-semibold text-gray-200 leading-snug">{{ movie.title }}</span>
+            </div>
           </div>
           
           <!-- Content -->
