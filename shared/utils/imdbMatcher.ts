@@ -164,6 +164,23 @@ export function titleSimilarity(a: string, b: string): number {
   return union === 0 ? 0 : inter / union;
 }
 
+const TRAILING_YEAR = /\s*\((\d{4})\)\s*$/;
+
+/**
+ * Splits a trailing "(YYYY)" annotation off a title, e.g. Kino listing
+ * classic reruns as "Bjergkøbing Grand Prix (1975)". Returns the title with
+ * the annotation removed, and the year if it's in a plausible release-year
+ * range (guards against e.g. "Room 1408" or other incidental 4-digit
+ * parentheticals that aren't actually a year).
+ */
+function splitTrailingYear(title: string): { stripped: string; year: number | null } {
+  const m = title.match(TRAILING_YEAR);
+  if (!m) return { stripped: title, year: null };
+  const year = parseInt(m[1]!, 10);
+  if (year < 1888 || year > new Date().getFullYear() + 2) return { stripped: title, year: null };
+  return { stripped: title.slice(0, m.index).trim(), year };
+}
+
 function kinoYear(movie: KinoMovieInput): number | null {
   if (movie.productionYear && /^\d{4}$/.test(movie.productionYear)) {
     return parseInt(movie.productionYear, 10);
@@ -202,14 +219,28 @@ const WIDE_RELEASE_SHOW_THRESHOLD = 20;
 function scoreCandidate(movie: KinoMovieInput, candidate: Candidate): number {
   let score = 0;
 
-  const kinoTitles = [movie.title, movie.titleOriginal].filter((t): t is string => !!t);
+  const rawKinoTitles = [movie.title, movie.titleOriginal].filter((t): t is string => !!t);
+  const titleAnnotations = rawKinoTitles.map(splitTrailingYear);
+  // Both the raw title (with its "(YYYY)" annotation, if any) and the
+  // de-annotated version are scored, and the higher of the two wins -- the
+  // annotation is noise for similarity (those digits don't appear in any
+  // candidate's title) but stripping it unconditionally would be just as
+  // arbitrary as keeping it, so let the actual score decide per-candidate.
+  const kinoTitles = [...new Set([...rawKinoTitles, ...titleAnnotations.map((t) => t.stripped)])];
   const candidateTitles = [candidate.title, candidate.originalTitle].filter((t): t is string => !!t);
   const titleScores = kinoTitles.flatMap((kt) => candidateTitles.map((ct) => titleSimilarity(kt, ct)));
-  let titleComponent = Math.max(0, ...titleScores) * 40;
+  const maxTitleScore = Math.max(0, ...titleScores);
+  let titleComponent = maxTitleScore * 40;
   if (candidate.titleAlreadyRelevant) titleComponent = Math.max(titleComponent, 22);
   score += titleComponent;
 
-  const kYear = kinoYear(movie);
+  // Same principle for year: Kino's premiere/productionYear fields can be
+  // stale (e.g. a rerun keeps an old listing's date) while a "(YYYY)"
+  // annotation baked into the title itself is sometimes the trustworthy one
+  // (or vice versa) -- try every year Kino gives us for this title and keep
+  // whichever produces the best-scoring match against the candidate, rather
+  // than hard-coding which source to trust.
+  const yearCandidates = [...new Set([kinoYear(movie), ...titleAnnotations.map((t) => t.year)].filter((y): y is number => y !== null))];
   const isWideRelease = (movie.showCount ?? 0) >= WIDE_RELEASE_SHOW_THRESHOLD;
   const isCurrentRelease = candidate.year !== null && Math.abs(candidate.year - new Date().getFullYear()) <= 1;
 
@@ -218,11 +249,14 @@ function scoreCandidate(movie: KinoMovieInput, candidate: Candidate): number {
     // an earlier release under the same name) -- trust the candidate's own
     // recency over it, same weight as a genuine exact year match.
     score += 30;
-  } else if (kYear !== null && candidate.year !== null) {
-    const diff = Math.abs(kYear - candidate.year);
-    if (diff === 0) score += 30;
-    else if (diff === 1) score += 18;
-    else score -= 20;
+  } else if (yearCandidates.length > 0 && candidate.year !== null) {
+    const yearScores = yearCandidates.map((y) => {
+      const diff = Math.abs(y - candidate.year!);
+      if (diff === 0) return 30;
+      if (diff === 1) return 18;
+      return -20;
+    });
+    score += Math.max(...yearScores);
   }
 
   if (movie.nationalities?.length && candidate.countries.length) {
@@ -240,7 +274,14 @@ function scoreCandidate(movie: KinoMovieInput, candidate: Candidate): number {
   }
 
   if (candidate.typeText === "Movie") score += 8;
-  else if (candidate.typeText && NON_THEATRICAL_TYPES.has(candidate.typeText)) score -= 25;
+  else if (candidate.typeText && NON_THEATRICAL_TYPES.has(candidate.typeText)) {
+    // The penalty exists to stop a short that merely *shares* a title
+    // string from crowding out the real feature (see comment above). That
+    // rationale doesn't apply when it's Kino's own title matching exactly --
+    // there's no coincidence left to guard against, so a genuine short being
+    // screened under its own name isn't docked for being a short.
+    if (!(candidate.typeText === "Short" && maxTitleScore === 1)) score -= 25;
+  }
 
   score += popularityBonus(candidate.popularityRank);
 
