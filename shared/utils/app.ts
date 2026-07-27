@@ -123,7 +123,7 @@ export async function processData(data: any, tmdbApiKey?: string): Promise<Movie
                     }
                 }
             }).catch(error => {
-                //console.warn(`Failed to resolve IMDb data for "${title}":`, error);
+                console.warn(`[processData] IMDb resolution failed for "${title}": ${error?.message ?? error}`);
             });
 
             imdbPromises.push(imdbPromise);

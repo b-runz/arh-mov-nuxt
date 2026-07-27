@@ -14,7 +14,8 @@ export async function getRating(tt: string): Promise<ImdbData> {
                 ? `${title.releaseDate.year}-${title.releaseDate.month}-${title.releaseDate.day}`
                 : ''
         };
-    } catch {
+    } catch (error) {
+        console.warn(`[imdb] rating lookup failed for ${tt}: ${(error as Error)?.message ?? error}`);
         return { rating: '?', datePublished: '' };
     }
 }
