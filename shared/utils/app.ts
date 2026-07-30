@@ -4,6 +4,19 @@ import type { Movie } from "../types/movie";
 import { getRating } from './imdb';
 import { resolveImdbId, type KinoMovieInput } from './imdbMatcher';
 import { get_poster_url } from './tmdb_poster';
+import { planMovieFetch, type MovieCache } from './movieCache';
+
+export interface MovieEnrichmentDeps {
+    resolveImdbId: typeof resolveImdbId;
+    getRating: typeof getRating;
+    getPosterUrl: typeof get_poster_url;
+}
+
+const defaultDeps: MovieEnrichmentDeps = {
+    resolveImdbId,
+    getRating,
+    getPosterUrl: get_poster_url,
+};
 
 interface ApiShow {
     theaterName: string;
@@ -59,7 +72,104 @@ function findSharedPosterUrls(apiMovies: ApiMovie[]): Set<string> {
     return new Set([...counts.entries()].filter(([, count]) => count > 1).map(([url]) => url));
 }
 
-export async function processData(data: any, tmdbApiKey?: string): Promise<Movie[]> {
+async function enrichMovieWithImdbData(
+    movies: Record<string, Movie>,
+    id: string,
+    apiMovie: ApiMovie,
+    release_date: moment.Moment,
+    tmdbApiKey: string,
+    cache: MovieCache,
+    now: Date,
+    deps: MovieEnrichmentDeps
+): Promise<void> {
+    const plan = planMovieFetch(cache[id], now);
+
+    if (plan === 'unresolved') return;
+
+    if (plan === 'reuse') {
+        const cached = cache[id]!;
+        movies[id]!.imdb_link = cached.imdb_link;
+        movies[id]!.imdb_rating = cached.imdb_rating;
+        movies[id]!.poster = cached.poster;
+        movies[id]!.release_date = cached.release_date;
+        movies[id]!.display_release_date = cached.display_release_date;
+        return;
+    }
+
+    try {
+        if (plan === 'refresh') {
+            const cached = cache[id]!;
+            // Apply the stale cached result up front so a failed refresh still
+            // leaves this movie fully resolved, just with last build's rating/poster.
+            movies[id]!.imdb_link = cached.imdb_link;
+            movies[id]!.imdb_rating = cached.imdb_rating;
+            movies[id]!.poster = cached.poster;
+            movies[id]!.release_date = cached.release_date;
+            movies[id]!.display_release_date = cached.display_release_date;
+
+            const imdbData = await deps.getRating(cached.imdb_link);
+            const rating = imdbData.rating !== '?' ? imdbData.rating : cached.imdb_rating;
+            const tmdbPoster = tmdbApiKey ? await deps.getPosterUrl(cached.imdb_link, tmdbApiKey) : '';
+            const poster = tmdbPoster || cached.poster;
+
+            movies[id]!.imdb_rating = rating;
+            movies[id]!.poster = poster;
+
+            cache[id] = {
+                imdb_link: cached.imdb_link,
+                imdb_rating: rating,
+                poster,
+                release_date: cached.release_date,
+                display_release_date: cached.display_release_date,
+                cachedAt: now.toISOString(),
+            };
+            return;
+        }
+
+        // plan === 'resolve': this movie has never been attempted before.
+        const match = await deps.resolveImdbId(buildKinoMovieInput(apiMovie, release_date), tmdbApiKey);
+        if (match && (match.confidence === 'high' || match.confidence === 'medium')) {
+            const imdbData = await deps.getRating(match.imdbId);
+            movies[id]!.imdb_rating = imdbData.rating;
+            movies[id]!.imdb_link = match.imdbId;
+
+            if (imdbData.datePublished && release_date.year() === 1900) {
+                const imdbDate = moment(imdbData.datePublished, 'YYYY-MM-DD');
+                if (imdbDate.isValid()) {
+                    movies[id]!.release_date = imdbDate.toISOString();
+                    movies[id]!.display_release_date = formatDisplayDate(imdbDate);
+                }
+            }
+
+            if (!movies[id]!.poster && tmdbApiKey) {
+                const tmdbPoster = await deps.getPosterUrl(match.imdbId, tmdbApiKey) || match.tmdbPosterUrl;
+                if (tmdbPoster) movies[id]!.poster = tmdbPoster;
+            }
+        }
+
+        // Cache whatever we ended up with -- resolved or not -- so resolveImdbId
+        // never runs again for this movie (see
+        // docs/superpowers/specs/2026-07-30-movie-match-cache-design.md).
+        cache[id] = {
+            imdb_link: movies[id]!.imdb_link,
+            imdb_rating: movies[id]!.imdb_rating,
+            poster: movies[id]!.poster,
+            release_date: movies[id]!.release_date,
+            display_release_date: movies[id]!.display_release_date,
+            cachedAt: now.toISOString(),
+        };
+    } catch (error) {
+        console.warn(`[processData] IMDb resolution failed for "${apiMovie.title}": ${(error as Error)?.message ?? error}`);
+    }
+}
+
+export async function processData(
+    data: any,
+    tmdbApiKey: string | undefined,
+    cache: MovieCache,
+    now: Date = new Date(),
+    deps: MovieEnrichmentDeps = defaultDeps
+): Promise<Movie[]> {
     // Perform any further processing or rendering with the transformed data
     let movies: Record<string, Movie> = {}
     let imdbPromises: Promise<void>[] = []
@@ -92,41 +202,7 @@ export async function processData(data: any, tmdbApiKey?: string): Promise<Movie
                 display_release_date: release_date.locale("en").format('DD. MMM. YYYY')
             }
 
-            // The GraphQL schedule API doesn't expose an IMDb id directly,
-            // so every movie is resolved through the matching algorithm.
-            const imdbPromise = resolveImdbId(buildKinoMovieInput(apiMovie, release_date), tmdbApiKey ?? "").then(async match => {
-                if (match && (match.confidence === 'high' || match.confidence === 'medium')) {
-                    const imdbData = await getRating(match.imdbId);
-                    if (movies[id]) {
-                        movies[id].imdb_rating = imdbData.rating;
-                        movies[id].imdb_link = match.imdbId;
-
-                        if (imdbData.datePublished && release_date.year() == 1900) {
-                            const imdbDate = moment(imdbData.datePublished, 'YYYY-MM-DD');
-                            if (imdbDate.isValid()) {
-                                movies[id].release_date = imdbDate.toISOString();
-                                movies[id].display_release_date = formatDisplayDate(imdbDate);
-                            }
-                        }
-
-                        if (!movies[id].poster && tmdbApiKey) {
-                            // TMDB doesn't always cross-link its own entry to the
-                            // matched IMDb id, which makes the by-imdb-id lookup
-                            // come back empty even though TMDB has the movie --
-                            // fall back to the poster captured directly off the
-                            // title-search hit during matching in that case.
-                            const tmdbPoster = await get_poster_url(match.imdbId, tmdbApiKey) || match.tmdbPosterUrl;
-                            if (tmdbPoster) {
-                                movies[id].poster = tmdbPoster;
-                            }
-                        }
-                    }
-                }
-            }).catch(error => {
-                console.warn(`[processData] IMDb resolution failed for "${title}": ${error?.message ?? error}`);
-            });
-
-            imdbPromises.push(imdbPromise);
+            imdbPromises.push(enrichMovieWithImdbData(movies, id, apiMovie, release_date, tmdbApiKey ?? "", cache, now, deps));
         }
 
         const movie = movies[id]
