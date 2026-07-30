@@ -1,0 +1,19 @@
+# Manually wipes the movie-match cache (see docs/superpowers/specs/2026-07-30-movie-match-cache-design.md).
+# Run this after tuning the matching algorithm, or to force every movie to
+# be re-resolved from scratch on the next build.
+name: Invalidate movie cache
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  invalidate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete all Actions caches for this repo
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh cache delete --all --succeed-on-no-caches --repo ${{ github.repository }}
