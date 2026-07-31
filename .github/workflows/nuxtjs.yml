@@ -39,6 +39,13 @@ jobs:
         uses: actions/configure-pages@v5
       - name: Install dependencies
         run: bun install
+      - name: Restore movie match cache
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: movie-cache-${{ github.run_id }}
+          restore-keys: |
+            movie-cache-
       - name: Static HTML export with Nuxt
         env:
           TMDB_READ_TOKEN: ${{ secrets.TMDB_READ_TOKEN }}
