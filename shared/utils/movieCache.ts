@@ -1,6 +1,3 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-
 export interface CachedMovie {
   imdb_link: string;
   imdb_rating: string;
@@ -27,19 +24,4 @@ export function planMovieFetch(entry: CachedMovie | undefined, now: Date): Fetch
   if (!entry.imdb_link) return "unresolved";
   const age = now.getTime() - new Date(entry.cachedAt).getTime();
   return age > CACHE_TTL_MS ? "refresh" : "reuse";
-}
-
-export async function loadMovieCache(path: string): Promise<MovieCache> {
-  try {
-    const raw = await readFile(path, "utf-8");
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? (parsed as MovieCache) : {};
-  } catch {
-    return {};
-  }
-}
-
-export async function saveMovieCache(path: string, cache: MovieCache): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify(cache, null, 2), "utf-8");
 }
