@@ -90,9 +90,15 @@ async function enrichMovieWithImdbData(
         const cached = cache[id]!;
         movies[id]!.imdb_link = cached.imdb_link;
         movies[id]!.imdb_rating = cached.imdb_rating;
-        movies[id]!.poster = cached.poster;
-        movies[id]!.release_date = cached.release_date;
-        movies[id]!.display_release_date = cached.display_release_date;
+        // Prefer this build's fresher feed data over the cached snapshot; only
+        // fall back to the cache when the fresh data is missing/placeholder.
+        if (!movies[id]!.poster) {
+            movies[id]!.poster = cached.poster;
+        }
+        if (release_date.year() === 1900) {
+            movies[id]!.release_date = cached.release_date;
+            movies[id]!.display_release_date = cached.display_release_date;
+        }
         return;
     }
 
@@ -101,16 +107,23 @@ async function enrichMovieWithImdbData(
             const cached = cache[id]!;
             // Apply the stale cached result up front so a failed refresh still
             // leaves this movie fully resolved, just with last build's rating/poster.
+            // As in the 'reuse' branch, prefer this build's fresher feed data over
+            // the cached snapshot; only fall back to the cache when the fresh data
+            // is missing/placeholder.
             movies[id]!.imdb_link = cached.imdb_link;
             movies[id]!.imdb_rating = cached.imdb_rating;
-            movies[id]!.poster = cached.poster;
-            movies[id]!.release_date = cached.release_date;
-            movies[id]!.display_release_date = cached.display_release_date;
+            if (!movies[id]!.poster) {
+                movies[id]!.poster = cached.poster;
+            }
+            if (release_date.year() === 1900) {
+                movies[id]!.release_date = cached.release_date;
+                movies[id]!.display_release_date = cached.display_release_date;
+            }
 
             const imdbData = await deps.getRating(cached.imdb_link);
             const rating = imdbData.rating !== '?' ? imdbData.rating : cached.imdb_rating;
             const tmdbPoster = tmdbApiKey ? await deps.getPosterUrl(cached.imdb_link, tmdbApiKey) : '';
-            const poster = tmdbPoster || cached.poster;
+            const poster = tmdbPoster || movies[id]!.poster;
 
             movies[id]!.imdb_rating = rating;
             movies[id]!.poster = poster;
@@ -118,9 +131,9 @@ async function enrichMovieWithImdbData(
             cache[id] = {
                 imdb_link: cached.imdb_link,
                 imdb_rating: rating,
-                poster,
-                release_date: cached.release_date,
-                display_release_date: cached.display_release_date,
+                poster: movies[id]!.poster,
+                release_date: movies[id]!.release_date,
+                display_release_date: movies[id]!.display_release_date,
                 cachedAt: now.toISOString(),
             };
             return;

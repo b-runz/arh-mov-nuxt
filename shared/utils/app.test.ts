@@ -5,7 +5,7 @@ import type { ImdbMatch } from "./imdbMatcher";
 
 const NOW = new Date("2026-07-30T00:00:00.000Z");
 
-function apiData(overrides: Partial<{ title: string; sanityImagePosterUrl: string }> = {}) {
+function apiData(overrides: Partial<{ title: string; sanityImagePosterUrl: string; premiere: string }> = {}) {
   return {
     data: {
       movieQuery: {
@@ -14,7 +14,7 @@ function apiData(overrides: Partial<{ title: string; sanityImagePosterUrl: strin
             title: overrides.title ?? "Test Movie",
             titleOriginal: "",
             mainVersionId: "1",
-            premiere: "2026-01-01",
+            premiere: overrides.premiere ?? "2026-01-01",
             productionYear: "2026",
             nationalities: ["Denmark"],
             lengthInMinutes: 100,
@@ -97,6 +97,41 @@ describe("processData with a cache", () => {
     expect(deps.getPosterUrl).not.toHaveBeenCalled();
     expect(movies[0]!.imdb_rating).toBe("9.0");
     expect(movies[0]!.poster).toBe("https://example.com/cached.jpg");
+  });
+
+  test("'reuse' plan: fresher feed data (real premiere + real poster) overrides a stale cached 1900 release date and empty poster", async () => {
+    const cache: MovieCache = {
+      "test-movie": {
+        imdb_link: "tt9999999",
+        imdb_rating: "9.0",
+        poster: "",
+        release_date: "1900-01-01T00:00:00.000Z",
+        display_release_date: "01 January 1900",
+        cachedAt: new Date(NOW.getTime() - 1000).toISOString(),
+      },
+    };
+    const deps: MovieEnrichmentDeps = {
+      resolveImdbId: mock(async () => fakeMatch()),
+      getRating: mock(async () => ({ rating: "8.5", datePublished: "" })),
+      getPosterUrl: mock(async () => "https://example.com/poster.jpg"),
+    };
+
+    const movies = await processData(
+      apiData({ premiere: "2026-05-01", sanityImagePosterUrl: "https://feed.example.com/fresh.jpg" }),
+      "tmdb-token",
+      cache,
+      NOW,
+      deps
+    );
+
+    // The cache is reused for id/rating, but the fresher feed data (a real
+    // premiere date and a real poster) must win over the stale 1900
+    // placeholder / empty poster frozen in the cache.
+    expect(deps.resolveImdbId).not.toHaveBeenCalled();
+    expect(movies[0]!.poster).toBe("https://feed.example.com/fresh.jpg");
+    expect(movies[0]!.release_date).not.toBe("1900-01-01T00:00:00.000Z");
+    expect(movies[0]!.display_release_date).not.toBe("01 January 1900");
+    expect(new Date(movies[0]!.release_date).getUTCFullYear()).toBe(2026);
   });
 
   test("'refresh' plan: a stale cache entry keeps its id but refreshes rating/poster", async () => {
