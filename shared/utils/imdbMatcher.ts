@@ -424,7 +424,12 @@ interface ImdbSearchEntity {
 async function imdbGraphqlSearch(term: string): Promise<ImdbSearchEntity[]> {
   const res = await fetch(IMDB_GRAPHQL_ENDPOINT, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      // Same 403-without-Referer behavior as shared/utils/imdb.ts -- see comment there.
+      "Referer": "https://www.imdb.com/",
+      "Origin": "https://www.imdb.com",
+    },
     body: JSON.stringify({ operationName: "Search", query: IMDB_SEARCH_QUERY, variables: { term } }),
   });
   if (!res.ok) throw new Error(`IMDb search failed: ${res.status}`);

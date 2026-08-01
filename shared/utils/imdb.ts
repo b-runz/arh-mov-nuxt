@@ -42,7 +42,12 @@ async function makeHttpsRequest(url: string, body: string): Promise<ImdbRatingRe
             method: 'POST',
             body: body,
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                // IMDb's edge returns 403 without a same-site Referer/Origin,
+                // regardless of caller IP -- reproduced with plain curl and
+                // Node's native fetch, not just from GitHub Actions.
+                'Referer': 'https://www.imdb.com/',
+                'Origin': 'https://www.imdb.com'
             }
         });
 
