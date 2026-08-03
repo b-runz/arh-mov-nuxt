@@ -689,8 +689,19 @@ export async function resolveImdbId(movie: KinoMovieInput, tmdbToken: string): P
   }
   if (best && best.confidence === "high") return best;
 
-  for (const variant of titleStrippingVariants(movie.title)) {
-    const stripped = await findImdbId({ ...movie, title: variant }, tmdbToken).catch(() => null);
+  // Variants are independent guesses about the same movie, so fire them all
+  // at once instead of awaiting one at a time -- this is the difference
+  // between paying for the slowest variant vs. the sum of all of them,
+  // which matters most for a title with a weak/absent base match (the case
+  // where every variant ends up needed). Selection below still walks the
+  // results in the original variant order so which one wins is unchanged
+  // from the sequential version.
+  const variants = titleStrippingVariants(movie.title);
+  const variantResults = await Promise.all(
+    variants.map((variant) => findImdbId({ ...movie, title: variant }, tmdbToken).catch(() => null))
+  );
+
+  for (const stripped of variantResults) {
     if (!stripped) continue;
 
     // Stripping is itself an unverified guess about what to throw away, so
