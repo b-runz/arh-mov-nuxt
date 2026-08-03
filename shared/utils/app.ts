@@ -103,6 +103,38 @@ async function enrichMovieWithImdbData(
     }
 
     try {
+        if (plan === 'rating-only') {
+            const cached = cache[id]!;
+            // The imdb id is already resolved and confirmed -- only the
+            // rating itself is worth rechecking here (it's the one thing
+            // that legitimately gets added over time, once a movie releases
+            // and IMDb accumulates votes). Deliberately skip resolveImdbId
+            // (full title/paradisbio matching) and the poster lookup: both
+            // are already-settled facts about this movie, not things that
+            // change while it just sits waiting to be rated.
+            movies[id]!.imdb_link = cached.imdb_link;
+            if (!movies[id]!.poster) {
+                movies[id]!.poster = cached.poster;
+            }
+            if (release_date.year() === 1900) {
+                movies[id]!.release_date = cached.release_date;
+                movies[id]!.display_release_date = cached.display_release_date;
+            }
+
+            const imdbData = await deps.getRating(cached.imdb_link);
+            movies[id]!.imdb_rating = imdbData.rating;
+
+            cache[id] = {
+                imdb_link: cached.imdb_link,
+                imdb_rating: imdbData.rating,
+                poster: movies[id]!.poster,
+                release_date: movies[id]!.release_date,
+                display_release_date: movies[id]!.display_release_date,
+                cachedAt: now.toISOString(),
+            };
+            return;
+        }
+
         if (plan === 'refresh') {
             const cached = cache[id]!;
             // Apply the stale cached result up front so a failed refresh still
@@ -121,11 +153,7 @@ async function enrichMovieWithImdbData(
             }
 
             const imdbData = await deps.getRating(cached.imdb_link);
-            // On a genuine fetch failure, keep the stale cached rating and
-            // leave ratingPending set so this retries again next build. On
-            // success -- even if that success is itself "no rating yet" --
-            // take the fresh value and let the normal TTL apply from here.
-            const rating = imdbData.ratingFailed ? cached.imdb_rating : imdbData.rating;
+            const rating = imdbData.rating !== '?' ? imdbData.rating : cached.imdb_rating;
             const tmdbPoster = tmdbApiKey ? await deps.getPosterUrl(cached.imdb_link, tmdbApiKey) : '';
             const poster = tmdbPoster || movies[id]!.poster;
 
@@ -139,17 +167,14 @@ async function enrichMovieWithImdbData(
                 release_date: movies[id]!.release_date,
                 display_release_date: movies[id]!.display_release_date,
                 cachedAt: now.toISOString(),
-                ratingPending: imdbData.ratingFailed,
             };
             return;
         }
 
         // plan === 'resolve': this movie has never been attempted before.
         const match = await deps.resolveImdbId(buildKinoMovieInput(apiMovie, release_date), tmdbApiKey);
-        let ratingFailed = false;
         if (match && (match.confidence === 'high' || match.confidence === 'medium')) {
             const imdbData = await deps.getRating(match.imdbId);
-            ratingFailed = imdbData.ratingFailed;
             movies[id]!.imdb_rating = imdbData.rating;
             movies[id]!.imdb_link = match.imdbId;
 
@@ -177,7 +202,6 @@ async function enrichMovieWithImdbData(
             release_date: movies[id]!.release_date,
             display_release_date: movies[id]!.display_release_date,
             cachedAt: now.toISOString(),
-            ratingPending: ratingFailed,
         };
     } catch (error) {
         console.warn(`[processData] IMDb resolution failed for "${apiMovie.title}": ${(error as Error)?.message ?? error}`);

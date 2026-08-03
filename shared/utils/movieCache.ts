@@ -5,14 +5,6 @@ export interface CachedMovie {
   release_date: string;
   display_release_date: string;
   cachedAt: string;
-  /**
-   * True only when the last rating fetch actually failed/errored (see
-   * ImdbData.ratingFailed in imdb.ts) -- not when it succeeded but the movie
-   * legitimately has no rating yet. Only this bypasses the TTL below; a
-   * legitimate "no rating yet" is treated as a normal resolved result and
-   * only rechecked once the TTL expires, same as any other movie.
-   */
-  ratingPending?: boolean;
 }
 
 export type MovieCache = Record<string, CachedMovie>;
@@ -25,15 +17,17 @@ export const MOVIE_CACHE_PATH = ".cache/movie-cache.json";
 // rating/poster are ever refreshed, and only for already-resolved movies.
 export const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-export type FetchPlan = "resolve" | "reuse" | "refresh" | "unresolved";
+export type FetchPlan = "resolve" | "reuse" | "refresh" | "unresolved" | "rating-only";
 
 export function planMovieFetch(entry: CachedMovie | undefined, now: Date): FetchPlan {
   if (!entry) return "resolve";
   if (!entry.imdb_link) return "unresolved";
-  // Only a genuine fetch failure bypasses the TTL -- a '?' rating from a
-  // movie that just isn't rated yet is a normal resolved outcome and waits
-  // for the TTL like anything else (see ratingPending's doc comment above).
-  if (entry.ratingPending) return "refresh";
+  // The imdb id is already resolved -- a still-unrated movie can get a real
+  // rating on IMDb any day (as it releases and accumulates votes), so check
+  // every build regardless of the TTL. This is deliberately cheap: it's the
+  // one-off rating lookup only, never the full match/poster pipeline (see
+  // enrichMovieWithImdbData's 'rating-only' branch in app.ts).
+  if (entry.imdb_rating === '?') return "rating-only";
   const age = now.getTime() - new Date(entry.cachedAt).getTime();
   return age > CACHE_TTL_MS ? "refresh" : "reuse";
 }

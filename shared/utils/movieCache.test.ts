@@ -48,10 +48,11 @@ describe("planMovieFetch", () => {
     expect(planMovieFetch(entry, now)).toBe("refresh");
   });
 
-  test("returns 'refresh' when ratingPending is set, even though resolved and well within the TTL", () => {
-    // ratingPending means the last rating fetch actually failed/was
-    // rate-limited, not that the movie has no rating -- it should not be
-    // frozen as a 7-day "success".
+  test("returns 'rating-only' when the cached rating is '?', even though well within the TTL", () => {
+    // The imdb id is already resolved -- a still-unrated movie can get a
+    // real rating on IMDb any day, so it's checked every build regardless of
+    // the TTL (unlike 'refresh', which waits for the TTL and also re-checks
+    // the poster).
     const entry: CachedMovie = {
       imdb_link: "tt1234567",
       imdb_rating: "?",
@@ -59,23 +60,21 @@ describe("planMovieFetch", () => {
       release_date: "2026-01-01T00:00:00.000Z",
       display_release_date: "01 January 2026",
       cachedAt: new Date(now.getTime() - 1000).toISOString(),
-      ratingPending: true,
     };
-    expect(planMovieFetch(entry, now)).toBe("refresh");
+    expect(planMovieFetch(entry, now)).toBe("rating-only");
   });
 
-  test("returns 'reuse' for a '?' rating within the TTL when ratingPending is NOT set (a legitimate, successful 'no rating yet' result)", () => {
-    // Unlike a genuine fetch failure, a movie with no rating yet (unreleased,
-    // too new for votes) isn't expected to suddenly get one before the TTL
-    // is up -- retrying it every single build is pure waste.
+  test("returns 'rating-only' when the cached rating is '?' and older than the TTL too", () => {
+    // '?' takes priority over the TTL check entirely -- it's not a
+    // TTL-driven decision at all.
     const entry: CachedMovie = {
       imdb_link: "tt1234567",
       imdb_rating: "?",
       poster: "https://example.com/p.jpg",
       release_date: "2026-01-01T00:00:00.000Z",
       display_release_date: "01 January 2026",
-      cachedAt: new Date(now.getTime() - 1000).toISOString(),
+      cachedAt: new Date(now.getTime() - (CACHE_TTL_MS + 1000)).toISOString(),
     };
-    expect(planMovieFetch(entry, now)).toBe("reuse");
+    expect(planMovieFetch(entry, now)).toBe("rating-only");
   });
 });

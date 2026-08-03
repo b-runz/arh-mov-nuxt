@@ -62,7 +62,7 @@ describe("processData with a cache", () => {
     const cache: MovieCache = {};
     const deps: MovieEnrichmentDeps = {
       resolveImdbId: mock(async () => fakeMatch({ confidence: "low" })),
-      getRating: mock(async () => ({ rating: "?", datePublished: "", ratingFailed: false })),
+      getRating: mock(async () => ({ rating: "?", datePublished: "" })),
       getPosterUrl: mock(async () => ""),
     };
 
@@ -73,32 +73,57 @@ describe("processData with a cache", () => {
     expect(cache["test-movie"]).toMatchObject({ imdb_link: "", imdb_rating: "?", cachedAt: NOW.toISOString() });
   });
 
-  test("'resolve' plan: a movie that just has no rating yet is NOT marked ratingPending -- it won't be retried every build", async () => {
-    const cache: MovieCache = {};
+  test("'rating-only' plan: an already-resolved but still-unrated movie only rechecks the rating -- no title matching, no poster lookup", async () => {
+    const cache: MovieCache = {
+      "test-movie": {
+        imdb_link: "tt9999999",
+        imdb_rating: "?",
+        poster: "https://example.com/cached.jpg",
+        release_date: "2025-01-01T00:00:00.000Z",
+        display_release_date: "01 January 2025",
+        cachedAt: new Date(NOW.getTime() - 1000).toISOString(),
+      },
+    };
     const deps: MovieEnrichmentDeps = {
       resolveImdbId: mock(async () => fakeMatch()),
-      getRating: mock(async () => ({ rating: "?", datePublished: "", ratingFailed: false })),
-      getPosterUrl: mock(async () => ""),
+      getRating: mock(async () => ({ rating: "7.8", datePublished: "" })),
+      getPosterUrl: mock(async () => "https://example.com/poster.jpg"),
     };
 
     const movies = await processData(apiData(), "tmdb-token", cache, NOW, deps);
 
-    expect(movies[0]!.imdb_rating).toBe("?");
-    expect(cache["test-movie"]!.ratingPending).toBeFalsy();
+    expect(deps.resolveImdbId).not.toHaveBeenCalled();
+    expect(deps.getPosterUrl).not.toHaveBeenCalled();
+    expect(deps.getRating).toHaveBeenCalledTimes(1);
+    expect(movies[0]!.imdb_link).toBe("tt9999999");
+    expect(movies[0]!.imdb_rating).toBe("7.8");
+    expect(movies[0]!.poster).toBe("https://example.com/cached.jpg");
+    expect(cache["test-movie"]).toMatchObject({ imdb_rating: "7.8", cachedAt: NOW.toISOString() });
   });
 
-  test("'resolve' plan: a genuine rating-fetch failure IS marked ratingPending -- retried next build regardless of TTL", async () => {
-    const cache: MovieCache = {};
+  test("'rating-only' plan: still unrated after rechecking -- stays '?', keeps getting checked next build", async () => {
+    const cache: MovieCache = {
+      "test-movie": {
+        imdb_link: "tt9999999",
+        imdb_rating: "?",
+        poster: "",
+        release_date: "2025-01-01T00:00:00.000Z",
+        display_release_date: "01 January 2025",
+        cachedAt: new Date(NOW.getTime() - 1000).toISOString(),
+      },
+    };
     const deps: MovieEnrichmentDeps = {
       resolveImdbId: mock(async () => fakeMatch()),
-      getRating: mock(async () => ({ rating: "?", datePublished: "", ratingFailed: true })),
+      getRating: mock(async () => ({ rating: "?", datePublished: "" })),
       getPosterUrl: mock(async () => ""),
     };
 
     const movies = await processData(apiData(), "tmdb-token", cache, NOW, deps);
 
+    expect(deps.resolveImdbId).not.toHaveBeenCalled();
+    expect(deps.getPosterUrl).not.toHaveBeenCalled();
     expect(movies[0]!.imdb_rating).toBe("?");
-    expect(cache["test-movie"]!.ratingPending).toBe(true);
+    expect(cache["test-movie"]!.imdb_rating).toBe("?");
   });
 
   test("'reuse' plan: a fresh cache entry is used as-is with no network calls", async () => {
