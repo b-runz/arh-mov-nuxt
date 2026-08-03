@@ -62,7 +62,7 @@ describe("processData with a cache", () => {
     const cache: MovieCache = {};
     const deps: MovieEnrichmentDeps = {
       resolveImdbId: mock(async () => fakeMatch({ confidence: "low" })),
-      getRating: mock(async () => ({ rating: "?", datePublished: "" })),
+      getRating: mock(async () => ({ rating: "?", datePublished: "", ratingFailed: false })),
       getPosterUrl: mock(async () => ""),
     };
 
@@ -71,6 +71,34 @@ describe("processData with a cache", () => {
     expect(deps.getRating).not.toHaveBeenCalled();
     expect(movies[0]!.imdb_rating).toBe("?");
     expect(cache["test-movie"]).toMatchObject({ imdb_link: "", imdb_rating: "?", cachedAt: NOW.toISOString() });
+  });
+
+  test("'resolve' plan: a movie that just has no rating yet is NOT marked ratingPending -- it won't be retried every build", async () => {
+    const cache: MovieCache = {};
+    const deps: MovieEnrichmentDeps = {
+      resolveImdbId: mock(async () => fakeMatch()),
+      getRating: mock(async () => ({ rating: "?", datePublished: "", ratingFailed: false })),
+      getPosterUrl: mock(async () => ""),
+    };
+
+    const movies = await processData(apiData(), "tmdb-token", cache, NOW, deps);
+
+    expect(movies[0]!.imdb_rating).toBe("?");
+    expect(cache["test-movie"]!.ratingPending).toBeFalsy();
+  });
+
+  test("'resolve' plan: a genuine rating-fetch failure IS marked ratingPending -- retried next build regardless of TTL", async () => {
+    const cache: MovieCache = {};
+    const deps: MovieEnrichmentDeps = {
+      resolveImdbId: mock(async () => fakeMatch()),
+      getRating: mock(async () => ({ rating: "?", datePublished: "", ratingFailed: true })),
+      getPosterUrl: mock(async () => ""),
+    };
+
+    const movies = await processData(apiData(), "tmdb-token", cache, NOW, deps);
+
+    expect(movies[0]!.imdb_rating).toBe("?");
+    expect(cache["test-movie"]!.ratingPending).toBe(true);
   });
 
   test("'reuse' plan: a fresh cache entry is used as-is with no network calls", async () => {

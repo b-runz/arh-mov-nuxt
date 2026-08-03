@@ -48,8 +48,8 @@ describe("planMovieFetch", () => {
     expect(planMovieFetch(entry, now)).toBe("refresh");
   });
 
-  test("returns 'refresh' when the cached rating is '?', even though resolved and well within the TTL", () => {
-    // A '?' rating means the last attempt to fetch a rating failed/was
+  test("returns 'refresh' when ratingPending is set, even though resolved and well within the TTL", () => {
+    // ratingPending means the last rating fetch actually failed/was
     // rate-limited, not that the movie has no rating -- it should not be
     // frozen as a 7-day "success".
     const entry: CachedMovie = {
@@ -59,7 +59,23 @@ describe("planMovieFetch", () => {
       release_date: "2026-01-01T00:00:00.000Z",
       display_release_date: "01 January 2026",
       cachedAt: new Date(now.getTime() - 1000).toISOString(),
+      ratingPending: true,
     };
     expect(planMovieFetch(entry, now)).toBe("refresh");
+  });
+
+  test("returns 'reuse' for a '?' rating within the TTL when ratingPending is NOT set (a legitimate, successful 'no rating yet' result)", () => {
+    // Unlike a genuine fetch failure, a movie with no rating yet (unreleased,
+    // too new for votes) isn't expected to suddenly get one before the TTL
+    // is up -- retrying it every single build is pure waste.
+    const entry: CachedMovie = {
+      imdb_link: "tt1234567",
+      imdb_rating: "?",
+      poster: "https://example.com/p.jpg",
+      release_date: "2026-01-01T00:00:00.000Z",
+      display_release_date: "01 January 2026",
+      cachedAt: new Date(now.getTime() - 1000).toISOString(),
+    };
+    expect(planMovieFetch(entry, now)).toBe("reuse");
   });
 });

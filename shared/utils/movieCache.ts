@@ -5,6 +5,14 @@ export interface CachedMovie {
   release_date: string;
   display_release_date: string;
   cachedAt: string;
+  /**
+   * True only when the last rating fetch actually failed/errored (see
+   * ImdbData.ratingFailed in imdb.ts) -- not when it succeeded but the movie
+   * legitimately has no rating yet. Only this bypasses the TTL below; a
+   * legitimate "no rating yet" is treated as a normal resolved result and
+   * only rechecked once the TTL expires, same as any other movie.
+   */
+  ratingPending?: boolean;
 }
 
 export type MovieCache = Record<string, CachedMovie>;
@@ -22,11 +30,10 @@ export type FetchPlan = "resolve" | "reuse" | "refresh" | "unresolved";
 export function planMovieFetch(entry: CachedMovie | undefined, now: Date): FetchPlan {
   if (!entry) return "resolve";
   if (!entry.imdb_link) return "unresolved";
-  // A '?' rating means the last attempt to fetch a rating failed or was
-  // rate-limited (getRating never throws -- it swallows all failures into
-  // '?'), not that the movie genuinely has no rating. Retry it on every
-  // build, ignoring the TTL, until it actually gets a real rating.
-  if (entry.imdb_rating === '?') return "refresh";
+  // Only a genuine fetch failure bypasses the TTL -- a '?' rating from a
+  // movie that just isn't rated yet is a normal resolved outcome and waits
+  // for the TTL like anything else (see ratingPending's doc comment above).
+  if (entry.ratingPending) return "refresh";
   const age = now.getTime() - new Date(entry.cachedAt).getTime();
   return age > CACHE_TTL_MS ? "refresh" : "reuse";
 }

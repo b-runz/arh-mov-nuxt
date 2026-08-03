@@ -1,22 +1,34 @@
 export interface ImdbData {
     rating: string;
     datePublished: string;
+    /**
+     * True only when the fetch itself failed (network error, rate-limit,
+     * unexpected/missing response) -- NOT when the request succeeded but the
+     * title simply has no rating yet (unreleased or too new for enough
+     * votes). Both cases return rating: '?', but only a genuine failure is
+     * worth retrying on the next build regardless of the cache TTL; a movie
+     * with no rating yet won't suddenly get one before it's actually rated,
+     * so retrying that case every single build is pure waste (see
+     * planMovieFetch in movieCache.ts).
+     */
+    ratingFailed: boolean;
 }
 
 export async function getRating(tt: string): Promise<ImdbData> {
     try {
         const response = await makeHttpsRequest("https://graphql.imdb.com/", `{"query": "query {title(id:\\"${tt}\\") {ratingsSummary {aggregateRating} releaseDate {day month year}}}"}`);
         const title = response.data?.title;
-        if (!title) return { rating: '?', datePublished: '' };
+        if (!title) return { rating: '?', datePublished: '', ratingFailed: true };
         return {
             rating: title.ratingsSummary?.aggregateRating?.toString() ?? '?',
             datePublished: title.releaseDate
                 ? `${title.releaseDate.year}-${title.releaseDate.month}-${title.releaseDate.day}`
-                : ''
+                : '',
+            ratingFailed: false,
         };
     } catch (error) {
         console.warn(`[imdb] rating lookup failed for ${tt}: ${(error as Error)?.message ?? error}`);
-        return { rating: '?', datePublished: '' };
+        return { rating: '?', datePublished: '', ratingFailed: true };
     }
 }
 

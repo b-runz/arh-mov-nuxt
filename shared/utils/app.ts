@@ -121,7 +121,11 @@ async function enrichMovieWithImdbData(
             }
 
             const imdbData = await deps.getRating(cached.imdb_link);
-            const rating = imdbData.rating !== '?' ? imdbData.rating : cached.imdb_rating;
+            // On a genuine fetch failure, keep the stale cached rating and
+            // leave ratingPending set so this retries again next build. On
+            // success -- even if that success is itself "no rating yet" --
+            // take the fresh value and let the normal TTL apply from here.
+            const rating = imdbData.ratingFailed ? cached.imdb_rating : imdbData.rating;
             const tmdbPoster = tmdbApiKey ? await deps.getPosterUrl(cached.imdb_link, tmdbApiKey) : '';
             const poster = tmdbPoster || movies[id]!.poster;
 
@@ -135,14 +139,17 @@ async function enrichMovieWithImdbData(
                 release_date: movies[id]!.release_date,
                 display_release_date: movies[id]!.display_release_date,
                 cachedAt: now.toISOString(),
+                ratingPending: imdbData.ratingFailed,
             };
             return;
         }
 
         // plan === 'resolve': this movie has never been attempted before.
         const match = await deps.resolveImdbId(buildKinoMovieInput(apiMovie, release_date), tmdbApiKey);
+        let ratingFailed = false;
         if (match && (match.confidence === 'high' || match.confidence === 'medium')) {
             const imdbData = await deps.getRating(match.imdbId);
+            ratingFailed = imdbData.ratingFailed;
             movies[id]!.imdb_rating = imdbData.rating;
             movies[id]!.imdb_link = match.imdbId;
 
@@ -170,6 +177,7 @@ async function enrichMovieWithImdbData(
             release_date: movies[id]!.release_date,
             display_release_date: movies[id]!.display_release_date,
             cachedAt: now.toISOString(),
+            ratingPending: ratingFailed,
         };
     } catch (error) {
         console.warn(`[processData] IMDb resolution failed for "${apiMovie.title}": ${(error as Error)?.message ?? error}`);
