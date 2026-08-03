@@ -27,14 +27,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Build job
-  build:
+  # Build and deploy in a single job/runner to avoid the ~10-15s of extra
+  # VM provisioning + job-handoff overhead that a separate deploy job costs.
+  build-and-deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Install dependencies
@@ -54,15 +60,6 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./.output/public
-
-  # Deployment job
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
