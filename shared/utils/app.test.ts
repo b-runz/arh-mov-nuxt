@@ -48,6 +48,7 @@ describe("processData with a cache", () => {
       resolveImdbId: mock(async () => fakeMatch()),
       getRating: mock(async () => ({ rating: "8.5", datePublished: "" })),
       getPosterUrl: mock(async () => "https://example.com/poster.jpg"),
+      isPlaceholderPosterUrl: mock(async () => false),
     };
 
     const movies = await processData(apiData(), "tmdb-token", cache, NOW, deps);
@@ -64,6 +65,7 @@ describe("processData with a cache", () => {
       resolveImdbId: mock(async () => fakeMatch({ confidence: "low" })),
       getRating: mock(async () => ({ rating: "?", datePublished: "" })),
       getPosterUrl: mock(async () => ""),
+      isPlaceholderPosterUrl: mock(async () => false),
     };
 
     const movies = await processData(apiData(), "tmdb-token", cache, NOW, deps);
@@ -71,6 +73,26 @@ describe("processData with a cache", () => {
     expect(deps.getRating).not.toHaveBeenCalled();
     expect(movies[0]!.imdb_rating).toBe("?");
     expect(cache["test-movie"]).toMatchObject({ imdb_link: "", imdb_rating: "?", cachedAt: NOW.toISOString() });
+  });
+
+  test("'resolve' plan: a poster url flagged as a placeholder (e.g. kino.dk's 'no poster' card) is not kept -- falls through to TMDB instead", async () => {
+    const cache: MovieCache = {};
+    const deps: MovieEnrichmentDeps = {
+      resolveImdbId: mock(async () => fakeMatch()),
+      getRating: mock(async () => ({ rating: "8.5", datePublished: "" })),
+      getPosterUrl: mock(async () => "https://image.tmdb.org/t/p/w500/real.jpg"),
+      isPlaceholderPosterUrl: mock(async (url: string) => url === "https://cdn.sanity.io/placeholder.jpg"),
+    };
+
+    const movies = await processData(
+      apiData({ sanityImagePosterUrl: "https://cdn.sanity.io/placeholder.jpg" }),
+      "tmdb-token",
+      cache,
+      NOW,
+      deps
+    );
+
+    expect(movies[0]!.poster).toBe("https://image.tmdb.org/t/p/w500/real.jpg");
   });
 
   test("'rating-only' plan: an already-resolved but still-unrated movie only rechecks the rating -- no title matching, no poster lookup", async () => {
@@ -88,6 +110,7 @@ describe("processData with a cache", () => {
       resolveImdbId: mock(async () => fakeMatch()),
       getRating: mock(async () => ({ rating: "7.8", datePublished: "" })),
       getPosterUrl: mock(async () => "https://example.com/poster.jpg"),
+      isPlaceholderPosterUrl: mock(async () => false),
     };
 
     const movies = await processData(apiData(), "tmdb-token", cache, NOW, deps);
@@ -116,6 +139,7 @@ describe("processData with a cache", () => {
       resolveImdbId: mock(async () => fakeMatch()),
       getRating: mock(async () => ({ rating: "?", datePublished: "" })),
       getPosterUrl: mock(async () => ""),
+      isPlaceholderPosterUrl: mock(async () => false),
     };
 
     const movies = await processData(apiData(), "tmdb-token", cache, NOW, deps);
@@ -141,6 +165,7 @@ describe("processData with a cache", () => {
       resolveImdbId: mock(async () => fakeMatch()),
       getRating: mock(async () => ({ rating: "8.5", datePublished: "" })),
       getPosterUrl: mock(async () => "https://example.com/poster.jpg"),
+      isPlaceholderPosterUrl: mock(async () => false),
     };
 
     const movies = await processData(apiData(), "tmdb-token", cache, NOW, deps);
@@ -167,6 +192,7 @@ describe("processData with a cache", () => {
       resolveImdbId: mock(async () => fakeMatch()),
       getRating: mock(async () => ({ rating: "8.5", datePublished: "" })),
       getPosterUrl: mock(async () => "https://example.com/poster.jpg"),
+      isPlaceholderPosterUrl: mock(async () => false),
     };
 
     const movies = await processData(
@@ -202,6 +228,7 @@ describe("processData with a cache", () => {
       resolveImdbId: mock(async () => fakeMatch()),
       getRating: mock(async () => ({ rating: "9.2", datePublished: "" })),
       getPosterUrl: mock(async () => "https://example.com/new-poster.jpg"),
+      isPlaceholderPosterUrl: mock(async () => false),
     };
 
     const movies = await processData(apiData(), "tmdb-token", cache, NOW, deps);
@@ -231,6 +258,7 @@ describe("processData with a cache", () => {
         throw new Error("network error");
       }),
       getPosterUrl: mock(async () => "https://example.com/new-poster.jpg"),
+      isPlaceholderPosterUrl: mock(async () => false),
     };
 
     const movies = await processData(apiData(), "tmdb-token", cache, NOW, deps);
@@ -256,6 +284,7 @@ describe("processData with a cache", () => {
       resolveImdbId: mock(async () => fakeMatch()),
       getRating: mock(async () => ({ rating: "8.5", datePublished: "" })),
       getPosterUrl: mock(async () => "https://example.com/poster.jpg"),
+      isPlaceholderPosterUrl: mock(async () => false),
     };
 
     const movies = await processData(apiData(), "tmdb-token", cache, NOW, deps);

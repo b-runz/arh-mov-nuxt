@@ -5,17 +5,20 @@ import { getRating } from './imdb';
 import { resolveImdbId, type KinoMovieInput } from './imdbMatcher';
 import { get_poster_url } from './tmdb_poster';
 import { planMovieFetch, type MovieCache } from './movieCache';
+import { isPlaceholderPosterUrl } from './posterPlaceholder';
 
 export interface MovieEnrichmentDeps {
     resolveImdbId: typeof resolveImdbId;
     getRating: typeof getRating;
     getPosterUrl: typeof get_poster_url;
+    isPlaceholderPosterUrl: typeof isPlaceholderPosterUrl;
 }
 
 const defaultDeps: MovieEnrichmentDeps = {
     resolveImdbId,
     getRating,
     getPosterUrl: get_poster_url,
+    isPlaceholderPosterUrl,
 };
 
 interface ApiShow {
@@ -57,19 +60,23 @@ function buildKinoMovieInput(apiMovie: ApiMovie, releaseDate: moment.Moment): Ki
     };
 }
 
-// Sanity serves the same placeholder image for every movie that doesn't
-// have a real poster yet, but the placeholder's URL isn't a fixed constant
-// we can hardcode (it's just whatever asset the CMS happens to use). A real
-// poster is unique to its movie, so any sanityImagePosterUrl shared by 2+
-// movies in the same batch is a placeholder, not an actual poster.
-function findSharedPosterUrls(apiMovies: ApiMovie[]): Set<string> {
-    const counts = new Map<string, number>();
-    for (const apiMovie of apiMovies) {
-        if (apiMovie.sanityImagePosterUrl) {
-            counts.set(apiMovie.sanityImagePosterUrl, (counts.get(apiMovie.sanityImagePosterUrl) ?? 0) + 1);
-        }
-    }
-    return new Set([...counts.entries()].filter(([, count]) => count > 1).map(([url]) => url));
+// Sanity serves a placeholder graphic for every movie that doesn't have a
+// real poster yet, and its URL isn't a fixed constant we can hardcode (it's
+// just whatever asset the CMS happens to use, and that asset can change).
+// Counting duplicate URLs within a single batch used to be how this was
+// detected, but that only catches it when 2+ currently-listed movies happen
+// to share the exact same placeholder URL at fetch time -- it misses a movie
+// that's the only one currently pointing at it. Checking the image's actual
+// pixel content (see posterPlaceholder.ts) doesn't have that blind spot.
+async function findPlaceholderPosterUrls(
+    apiMovies: ApiMovie[],
+    isPlaceholderPosterUrlFn: MovieEnrichmentDeps['isPlaceholderPosterUrl']
+): Promise<Set<string>> {
+    const distinctUrls = [...new Set(apiMovies.map(m => m.sanityImagePosterUrl).filter(Boolean))];
+    const checks = await Promise.all(
+        distinctUrls.map(async url => [url, await isPlaceholderPosterUrlFn(url)] as const)
+    );
+    return new Set(checks.filter(([, isPlaceholder]) => isPlaceholder).map(([url]) => url));
 }
 
 async function enrichMovieWithImdbData(
@@ -221,7 +228,7 @@ export async function processData(
     moment.locale("da")
 
     const apiMovies: ApiMovie[] = data?.data?.movieQuery?.getCurrentMovies ?? []
-    const sharedPosterUrls = findSharedPosterUrls(apiMovies)
+    const placeholderPosterUrls = await findPlaceholderPosterUrls(apiMovies, deps.isPlaceholderPosterUrl)
 
     for (const apiMovie of apiMovies) {
         const title = apiMovie.title
@@ -231,7 +238,7 @@ export async function processData(
         const release_date = parseReleaseDate(apiMovie.premiere)
 
         if (!(id in movies)) {
-            const isPlaceholderPoster = !apiMovie.sanityImagePosterUrl || sharedPosterUrls.has(apiMovie.sanityImagePosterUrl)
+            const isPlaceholderPoster = !apiMovie.sanityImagePosterUrl || placeholderPosterUrls.has(apiMovie.sanityImagePosterUrl)
             // Empty string means "no real poster" -- the UI renders a
             // title-card fallback for this instead of a placeholder image.
             let poster_uri = isPlaceholderPoster ? '' : apiMovie.sanityImagePosterUrl
