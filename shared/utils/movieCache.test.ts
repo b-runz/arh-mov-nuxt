@@ -19,6 +19,8 @@ describe("planMovieFetch", () => {
       poster: "",
       release_date: "",
       display_release_date: "",
+      plot: "",
+      language: "",
       cachedAt: now.toISOString(),
     };
     expect(planMovieFetch(entry, now)).toBe("unresolved");
@@ -31,6 +33,8 @@ describe("planMovieFetch", () => {
       poster: "https://example.com/p.jpg",
       release_date: "2026-01-01T00:00:00.000Z",
       display_release_date: "01 January 2026",
+      plot: "",
+      language: "",
       cachedAt: new Date(now.getTime() - (CACHE_TTL_MS - 1000)).toISOString(),
     };
     expect(planMovieFetch(entry, now)).toBe("reuse");
@@ -43,6 +47,8 @@ describe("planMovieFetch", () => {
       poster: "https://example.com/p.jpg",
       release_date: "2026-01-01T00:00:00.000Z",
       display_release_date: "01 January 2026",
+      plot: "",
+      language: "",
       cachedAt: new Date(now.getTime() - (CACHE_TTL_MS + 1000)).toISOString(),
     };
     expect(planMovieFetch(entry, now)).toBe("refresh");
@@ -59,6 +65,8 @@ describe("planMovieFetch", () => {
       poster: "https://example.com/p.jpg",
       release_date: "2026-01-01T00:00:00.000Z",
       display_release_date: "01 January 2026",
+      plot: "",
+      language: "",
       cachedAt: new Date(now.getTime() - 1000).toISOString(),
     };
     expect(planMovieFetch(entry, now)).toBe("rating-only");
@@ -73,6 +81,8 @@ describe("planMovieFetch", () => {
       poster: "https://example.com/p.jpg",
       release_date: "2026-01-01T00:00:00.000Z",
       display_release_date: "01 January 2026",
+      plot: "",
+      language: "",
       cachedAt: new Date(now.getTime() - (CACHE_TTL_MS + 1000)).toISOString(),
     };
     expect(planMovieFetch(entry, now)).toBe("rating-only");

@@ -7,6 +7,8 @@ export interface Movie {
     id: string;
     cinemas: Record<number, Cinema>;
     poster: string;
-    release_date: string; 
-    display_release_date: string
+    release_date: string;
+    display_release_date: string;
+    plot: string;
+    language: string;
   }

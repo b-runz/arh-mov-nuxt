@@ -3,21 +3,21 @@ import moment from 'moment';
 import type { Movie } from "../types/movie";
 import { getRating } from './imdb';
 import { resolveImdbId, type KinoMovieInput } from './imdbMatcher';
-import { get_poster_url } from './tmdb_poster';
+import { get_movie_metadata } from './tmdb_poster';
 import { planMovieFetch, type MovieCache } from './movieCache';
 import { isPlaceholderPosterUrl } from './posterPlaceholder';
 
 export interface MovieEnrichmentDeps {
     resolveImdbId: typeof resolveImdbId;
     getRating: typeof getRating;
-    getPosterUrl: typeof get_poster_url;
+    getMovieMetadata: typeof get_movie_metadata;
     isPlaceholderPosterUrl: typeof isPlaceholderPosterUrl;
 }
 
 const defaultDeps: MovieEnrichmentDeps = {
     resolveImdbId,
     getRating,
-    getPosterUrl: get_poster_url,
+    getMovieMetadata: get_movie_metadata,
     isPlaceholderPosterUrl,
 };
 
@@ -106,6 +106,10 @@ async function enrichMovieWithImdbData(
             movies[id]!.release_date = cached.release_date;
             movies[id]!.display_release_date = cached.display_release_date;
         }
+        // Plot/language are static facts about the movie, never supplied by
+        // the feed itself -- always carried forward from the cache.
+        movies[id]!.plot = cached.plot;
+        movies[id]!.language = cached.language;
         return;
     }
 
@@ -127,6 +131,8 @@ async function enrichMovieWithImdbData(
                 movies[id]!.release_date = cached.release_date;
                 movies[id]!.display_release_date = cached.display_release_date;
             }
+            movies[id]!.plot = cached.plot;
+            movies[id]!.language = cached.language;
 
             const imdbData = await deps.getRating(cached.imdb_link);
             movies[id]!.imdb_rating = imdbData.rating;
@@ -137,6 +143,8 @@ async function enrichMovieWithImdbData(
                 poster: movies[id]!.poster,
                 release_date: movies[id]!.release_date,
                 display_release_date: movies[id]!.display_release_date,
+                plot: movies[id]!.plot,
+                language: movies[id]!.language,
                 cachedAt: now.toISOString(),
             };
             return;
@@ -158,11 +166,15 @@ async function enrichMovieWithImdbData(
                 movies[id]!.release_date = cached.release_date;
                 movies[id]!.display_release_date = cached.display_release_date;
             }
+            // Plot/language are static facts, resolved once and never
+            // refreshed -- only rating/poster legitimately change over time.
+            movies[id]!.plot = cached.plot;
+            movies[id]!.language = cached.language;
 
             const imdbData = await deps.getRating(cached.imdb_link);
             const rating = imdbData.rating !== '?' ? imdbData.rating : cached.imdb_rating;
-            const tmdbPoster = tmdbApiKey ? await deps.getPosterUrl(cached.imdb_link, tmdbApiKey) : '';
-            const poster = tmdbPoster || movies[id]!.poster;
+            const metadata = tmdbApiKey ? await deps.getMovieMetadata(cached.imdb_link, tmdbApiKey) : null;
+            const poster = metadata?.poster || movies[id]!.poster;
 
             movies[id]!.imdb_rating = rating;
             movies[id]!.poster = poster;
@@ -173,6 +185,8 @@ async function enrichMovieWithImdbData(
                 poster: movies[id]!.poster,
                 release_date: movies[id]!.release_date,
                 display_release_date: movies[id]!.display_release_date,
+                plot: movies[id]!.plot,
+                language: movies[id]!.language,
                 cachedAt: now.toISOString(),
             };
             return;
@@ -193,9 +207,16 @@ async function enrichMovieWithImdbData(
                 }
             }
 
-            if (!movies[id]!.poster && tmdbApiKey) {
-                const tmdbPoster = await deps.getPosterUrl(match.imdbId, tmdbApiKey) || match.tmdbPosterUrl;
-                if (tmdbPoster) movies[id]!.poster = tmdbPoster;
+            // Fetched regardless of whether the feed already gave us a poster --
+            // plot/language aren't available from any other source, so this is
+            // the only chance to ever pick them up for this movie.
+            if (tmdbApiKey) {
+                const metadata = await deps.getMovieMetadata(match.imdbId, tmdbApiKey);
+                if (!movies[id]!.poster) {
+                    movies[id]!.poster = metadata.poster || match.tmdbPosterUrl || '';
+                }
+                movies[id]!.plot = metadata.plot;
+                movies[id]!.language = metadata.language;
             }
         }
 
@@ -208,6 +229,8 @@ async function enrichMovieWithImdbData(
             poster: movies[id]!.poster,
             release_date: movies[id]!.release_date,
             display_release_date: movies[id]!.display_release_date,
+            plot: movies[id]!.plot,
+            language: movies[id]!.language,
             cachedAt: now.toISOString(),
         };
     } catch (error) {
@@ -251,7 +274,9 @@ export async function processData(
                 id: id,
                 poster: poster_uri,
                 release_date: release_date.toISOString(),
-                display_release_date: release_date.locale("en").format('DD. MMM. YYYY')
+                display_release_date: release_date.locale("en").format('DD. MMM. YYYY'),
+                plot: '',
+                language: ''
             }
 
             imdbPromises.push(enrichMovieWithImdbData(movies, id, apiMovie, release_date, tmdbApiKey ?? "", cache, now, deps));
