@@ -81,6 +81,12 @@ export async function recommendMovies(
       "x-goog-api-key": apiKey,
     },
     body: JSON.stringify(buildRequestBody(movies)),
+    // The api key's HTTP-referrer restriction is path-scoped (only usable
+    // from this page), but a cross-origin request like this one otherwise
+    // defaults to sending just the origin, not the path, as Referer --
+    // Google would then see no path and reject with 403 regardless of the
+    // key/network being fine. Forces the full page URL through instead.
+    referrerPolicy: "unsafe-url",
   });
 
   if (!response.ok) {

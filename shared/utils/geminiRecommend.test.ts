@@ -100,6 +100,11 @@ describe("recommendMovies", () => {
     const [url, init] = fakeFetch.mock.calls[0]!;
     expect(url).toContain("generativelanguage.googleapis.com");
     expect((init.headers as Record<string, string>)["x-goog-api-key"]).toBe("my-api-key");
+    // The API key is restricted (HTTP referrer) to this page's own path, but
+    // browsers default to sending only the origin -- not the path -- as the
+    // Referer for a cross-origin request like this one. Without forcing the
+    // full URL, Google sees no path in the referrer and rejects with 403.
+    expect(init.referrerPolicy).toBe("unsafe-url");
   });
 
   test("throws when the Gemini request fails", async () => {
