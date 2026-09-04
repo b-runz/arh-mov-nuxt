@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useMovies } from '~/composables/useMovies';
-import { toRecommendable, recommendMovies } from '../shared/utils/geminiRecommend';
+import { toRecommendable, recommendMovies } from '~/shared/utils/geminiRecommend';
 
 useHead({
   title: 'AI Recommendations - Movies in Aarhus',
