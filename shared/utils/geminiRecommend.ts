@@ -10,7 +10,8 @@ export interface RecommendableMovie {
   showingCount: number;
 }
 
-const MODEL = "gemini-2.5-flash";
+// gemini-2.5-flash was retired -- Google's own 404 for it names this as the replacement.
+const MODEL = "gemini-3.6-flash";
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 
 const TASTE_PROMPT = `You are a film curator helping the user decide which of the currently-showing movies below are worth seeing. The user's taste: smaller / independent films over mainstream blockbusters, foreign-language films, one-off or limited/special screenings (a low showingCount) over long theatrical runs, and classic re-releases. You will receive a JSON array of movies, each with id, title, imdb_rating, year, language, plot, and showingCount. Return ONLY a JSON array of the "id" strings of the movies worth recommending, ordered best match first. Exclude movies that don't fit this taste. Do not include anything except the id strings that were given to you.`;
