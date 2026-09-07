@@ -1,6 +1,4 @@
 import { processData } from '~/shared/utils/app';
-import { MOVIE_CACHE_PATH } from '~/shared/utils/movieCache';
-import { loadMovieCache, saveMovieCache } from '~/server/utils/movieCacheStorage';
 import type { Movie } from '~/shared/types/movie';
 
 // api.kino.dk (the old Drupal-backed showtimes endpoint) is down; this hits
@@ -30,6 +28,9 @@ const QUERY = `
   }
 `;
 
+// Runs server-side (rather than directly in the useMovies composable) so
+// that posterPlaceholder.ts's use of sharp -- a native Node module -- never
+// gets pulled into the client bundle.
 export default defineEventHandler(async (): Promise<Movie[]> => {
   const config = useRuntimeConfig();
   try {
@@ -39,11 +40,7 @@ export default defineEventHandler(async (): Promise<Movie[]> => {
       body: JSON.stringify({ query: QUERY, variables: { locations: ['Aarhus', 'Trøjborg'] } })
     });
     const data = await response.json();
-
-    const cache = await loadMovieCache(MOVIE_CACHE_PATH);
-    const result = await processData(data, config.tmdbApiKey as string, cache);
-    await saveMovieCache(MOVIE_CACHE_PATH, cache);
-    return result;
+    return await processData(data, config.tmdbApiKey as string);
   } catch (error) {
     console.error('Failed to fetch movies:', error);
     return [];

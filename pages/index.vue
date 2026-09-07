@@ -48,10 +48,6 @@ const filteredMovies = computed(() => {
           <span class="ml-2 text-gray-300">Show only movies with rating > 7.0</span>
         </label>
       </div>
-
-      <div class="mt-4 flex justify-center">
-        <NuxtLink to="/recommend" class="text-orange-400 hover:text-orange-300 underline text-sm">Get AI recommendations →</NuxtLink>
-      </div>
     </div>
     <div v-if="!movies || movies.length === 0" class="mt-6">
       <div class="text-center">

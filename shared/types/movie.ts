@@ -9,6 +9,4 @@ export interface Movie {
     poster: string;
     release_date: string;
     display_release_date: string;
-    plot: string;
-    language: string;
   }

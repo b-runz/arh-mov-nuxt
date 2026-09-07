@@ -1,23 +1,21 @@
-
 import moment from 'moment';
 import type { Movie } from "../types/movie";
 import { getRating } from './imdb';
 import { resolveImdbId, type KinoMovieInput } from './imdbMatcher';
-import { get_movie_metadata } from './tmdb_poster';
-import { planMovieFetch, type MovieCache } from './movieCache';
+import { get_poster_url } from './tmdb_poster';
 import { isPlaceholderPosterUrl } from './posterPlaceholder';
 
 export interface MovieEnrichmentDeps {
     resolveImdbId: typeof resolveImdbId;
     getRating: typeof getRating;
-    getMovieMetadata: typeof get_movie_metadata;
+    getPosterUrl: typeof get_poster_url;
     isPlaceholderPosterUrl: typeof isPlaceholderPosterUrl;
 }
 
 const defaultDeps: MovieEnrichmentDeps = {
     resolveImdbId,
     getRating,
-    getMovieMetadata: get_movie_metadata,
+    getPosterUrl: get_poster_url,
     isPlaceholderPosterUrl,
 };
 
@@ -85,114 +83,9 @@ async function enrichMovieWithImdbData(
     apiMovie: ApiMovie,
     release_date: moment.Moment,
     tmdbApiKey: string,
-    cache: MovieCache,
-    now: Date,
     deps: MovieEnrichmentDeps
 ): Promise<void> {
-    const plan = planMovieFetch(cache[id], now);
-
-    if (plan === 'unresolved') return;
-
-    if (plan === 'reuse') {
-        const cached = cache[id]!;
-        movies[id]!.imdb_link = cached.imdb_link;
-        movies[id]!.imdb_rating = cached.imdb_rating;
-        // Prefer this build's fresher feed data over the cached snapshot; only
-        // fall back to the cache when the fresh data is missing/placeholder.
-        if (!movies[id]!.poster) {
-            movies[id]!.poster = cached.poster;
-        }
-        if (release_date.year() === 1900) {
-            movies[id]!.release_date = cached.release_date;
-            movies[id]!.display_release_date = cached.display_release_date;
-        }
-        // Plot/language are static facts about the movie, never supplied by
-        // the feed itself -- always carried forward from the cache.
-        movies[id]!.plot = cached.plot;
-        movies[id]!.language = cached.language;
-        return;
-    }
-
     try {
-        if (plan === 'rating-only') {
-            const cached = cache[id]!;
-            // The imdb id is already resolved and confirmed -- only the
-            // rating itself is worth rechecking here (it's the one thing
-            // that legitimately gets added over time, once a movie releases
-            // and IMDb accumulates votes). Deliberately skip resolveImdbId
-            // (full title/paradisbio matching) and the poster lookup: both
-            // are already-settled facts about this movie, not things that
-            // change while it just sits waiting to be rated.
-            movies[id]!.imdb_link = cached.imdb_link;
-            if (!movies[id]!.poster) {
-                movies[id]!.poster = cached.poster;
-            }
-            if (release_date.year() === 1900) {
-                movies[id]!.release_date = cached.release_date;
-                movies[id]!.display_release_date = cached.display_release_date;
-            }
-            movies[id]!.plot = cached.plot;
-            movies[id]!.language = cached.language;
-
-            const imdbData = await deps.getRating(cached.imdb_link);
-            movies[id]!.imdb_rating = imdbData.rating;
-
-            cache[id] = {
-                imdb_link: cached.imdb_link,
-                imdb_rating: imdbData.rating,
-                poster: movies[id]!.poster,
-                release_date: movies[id]!.release_date,
-                display_release_date: movies[id]!.display_release_date,
-                plot: movies[id]!.plot,
-                language: movies[id]!.language,
-                cachedAt: now.toISOString(),
-            };
-            return;
-        }
-
-        if (plan === 'refresh') {
-            const cached = cache[id]!;
-            // Apply the stale cached result up front so a failed refresh still
-            // leaves this movie fully resolved, just with last build's rating/poster.
-            // As in the 'reuse' branch, prefer this build's fresher feed data over
-            // the cached snapshot; only fall back to the cache when the fresh data
-            // is missing/placeholder.
-            movies[id]!.imdb_link = cached.imdb_link;
-            movies[id]!.imdb_rating = cached.imdb_rating;
-            if (!movies[id]!.poster) {
-                movies[id]!.poster = cached.poster;
-            }
-            if (release_date.year() === 1900) {
-                movies[id]!.release_date = cached.release_date;
-                movies[id]!.display_release_date = cached.display_release_date;
-            }
-            // Plot/language are static facts, resolved once and never
-            // refreshed -- only rating/poster legitimately change over time.
-            movies[id]!.plot = cached.plot;
-            movies[id]!.language = cached.language;
-
-            const imdbData = await deps.getRating(cached.imdb_link);
-            const rating = imdbData.rating !== '?' ? imdbData.rating : cached.imdb_rating;
-            const metadata = tmdbApiKey ? await deps.getMovieMetadata(cached.imdb_link, tmdbApiKey) : null;
-            const poster = metadata?.poster || movies[id]!.poster;
-
-            movies[id]!.imdb_rating = rating;
-            movies[id]!.poster = poster;
-
-            cache[id] = {
-                imdb_link: cached.imdb_link,
-                imdb_rating: rating,
-                poster: movies[id]!.poster,
-                release_date: movies[id]!.release_date,
-                display_release_date: movies[id]!.display_release_date,
-                plot: movies[id]!.plot,
-                language: movies[id]!.language,
-                cachedAt: now.toISOString(),
-            };
-            return;
-        }
-
-        // plan === 'resolve': this movie has never been attempted before.
         const match = await deps.resolveImdbId(buildKinoMovieInput(apiMovie, release_date), tmdbApiKey);
         if (match && (match.confidence === 'high' || match.confidence === 'medium')) {
             const imdbData = await deps.getRating(match.imdbId);
@@ -207,32 +100,16 @@ async function enrichMovieWithImdbData(
                 }
             }
 
-            // Fetched regardless of whether the feed already gave us a poster --
-            // plot/language aren't available from any other source, so this is
-            // the only chance to ever pick them up for this movie.
-            if (tmdbApiKey) {
-                const metadata = await deps.getMovieMetadata(match.imdbId, tmdbApiKey);
-                if (!movies[id]!.poster) {
-                    movies[id]!.poster = metadata.poster || match.tmdbPosterUrl || '';
-                }
-                movies[id]!.plot = metadata.plot;
-                movies[id]!.language = metadata.language;
+            if (!movies[id]!.poster && tmdbApiKey) {
+                // TMDB doesn't always cross-link its own entry to the
+                // matched IMDb id, which makes the by-imdb-id lookup
+                // come back empty even though TMDB has the movie --
+                // fall back to the poster captured directly off the
+                // title-search hit during matching in that case.
+                const tmdbPoster = await deps.getPosterUrl(match.imdbId, tmdbApiKey) || match.tmdbPosterUrl;
+                if (tmdbPoster) movies[id]!.poster = tmdbPoster;
             }
         }
-
-        // Cache whatever we ended up with -- resolved or not -- so resolveImdbId
-        // never runs again for this movie (see
-        // docs/superpowers/specs/2026-07-30-movie-match-cache-design.md).
-        cache[id] = {
-            imdb_link: movies[id]!.imdb_link,
-            imdb_rating: movies[id]!.imdb_rating,
-            poster: movies[id]!.poster,
-            release_date: movies[id]!.release_date,
-            display_release_date: movies[id]!.display_release_date,
-            plot: movies[id]!.plot,
-            language: movies[id]!.language,
-            cachedAt: now.toISOString(),
-        };
     } catch (error) {
         console.warn(`[processData] IMDb resolution failed for "${apiMovie.title}": ${(error as Error)?.message ?? error}`);
     }
@@ -241,8 +118,6 @@ async function enrichMovieWithImdbData(
 export async function processData(
     data: any,
     tmdbApiKey: string | undefined,
-    cache: MovieCache,
-    now: Date = new Date(),
     deps: MovieEnrichmentDeps = defaultDeps
 ): Promise<Movie[]> {
     // Perform any further processing or rendering with the transformed data
@@ -274,12 +149,12 @@ export async function processData(
                 id: id,
                 poster: poster_uri,
                 release_date: release_date.toISOString(),
-                display_release_date: release_date.locale("en").format('DD. MMM. YYYY'),
-                plot: '',
-                language: ''
+                display_release_date: release_date.locale("en").format('DD. MMM. YYYY')
             }
 
-            imdbPromises.push(enrichMovieWithImdbData(movies, id, apiMovie, release_date, tmdbApiKey ?? "", cache, now, deps));
+            // The GraphQL schedule API doesn't expose an IMDb id directly,
+            // so every movie is resolved through the matching algorithm.
+            imdbPromises.push(enrichMovieWithImdbData(movies, id, apiMovie, release_date, tmdbApiKey ?? "", deps));
         }
 
         const movie = movies[id]
