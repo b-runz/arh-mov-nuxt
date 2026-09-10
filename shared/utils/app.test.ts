@@ -32,6 +32,7 @@ function fakeMatch(overrides: Partial<ImdbMatch> = {}): ImdbMatch {
     margin: 30,
     agreement: true,
     candidateTitle: "Test Movie",
+    candidateOriginalTitle: "Test Movie",
     candidateYear: "2026",
     source: "tmdb+imdb",
     ...overrides,

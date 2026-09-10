@@ -49,6 +49,7 @@ export interface ImdbMatch {
   margin: number;
   agreement: boolean; // did 2+ sources land on the same tt id?
   candidateTitle: string;
+  candidateOriginalTitle: string;
   candidateYear: string;
   source: string; // e.g. "tmdb", "imdb+suggest"
   /** Set when the top two distinct tt id candidates are both plausible. */
@@ -607,6 +608,7 @@ export async function findImdbId(movie: KinoMovieInput, tmdbToken: string): Prom
     margin: Math.round(margin * 10) / 10,
     agreement: confidence === "high",
     candidateTitle: best.candidate.title,
+    candidateOriginalTitle: best.candidate.originalTitle,
     candidateYear: String(best.candidate.year ?? ""),
     source: sourceLabel,
     conflict,
@@ -668,13 +670,41 @@ export function titleStrippingVariants(title: string): string[] {
 }
 
 /**
+ * The same listing with every year signal removed. Kino's premiere is the
+ * *Danish* premiere, so for a re-release it's the re-release date, not the
+ * film's year (e.g. "Avengers: Endgame" listed with a 2026 premiere). Also
+ * drops showCount: the wide-release heuristic in scoreCandidate rewards
+ * candidate recency as a stand-in for a stale year, which is exactly the
+ * signal a year-less retry is trying to switch off.
+ */
+export function withoutYear(movie: KinoMovieInput): KinoMovieInput {
+  return { ...movie, premiere: undefined, productionYear: undefined, showCount: undefined };
+}
+
+/**
+ * True when the match's title is a 1:1 normalized match for the Kino title
+ * (or either side's original title). Used to gate the year-less retry: with
+ * no year to discriminate, a same-title remake (Moana 2016 vs 2026) is a
+ * coin flip and must not be accepted, but a single exact-title candidate
+ * winning over merely-similar franchise siblings is unambiguous.
+ */
+export function isExactTitleMatch(movie: Pick<KinoMovieInput, "title" | "titleOriginal">, match: Pick<ImdbMatch, "candidateTitle" | "candidateOriginalTitle">): boolean {
+  const kinoTitles = [movie.title, movie.titleOriginal].filter((t): t is string => !!t);
+  const candidateTitles = [match.candidateTitle, match.candidateOriginalTitle].filter(Boolean);
+  return kinoTitles.some((kt) => candidateTitles.some((ct) => titleSimilarity(kt, ct) === 1));
+}
+
+/**
  * Fully-automatic resolution: run the cheap 3-source search first. If that
  * isn't already high confidence, try two fallbacks in order, keeping
  * whichever result scores best overall:
  *   1. Scrape the movie's cinema venue page (currently just Øst for Paradis
  *      / paradisbio.dk) for its original title / country / year / runtime,
  *      and retry the search with that filled in.
- *   2. Strip event/annotation framing from the title (see
+ *   2. Retry with Kino's year removed (see withoutYear), accepted only for
+ *      a high-confidence, exact-title winner -- catches re-releases whose
+ *      Danish premiere is years after the film's own release.
+ *   3. Strip event/annotation framing from the title (see
  *      titleStrippingVariants) and retry the search with each variant.
  */
 export async function resolveImdbId(movie: KinoMovieInput, tmdbToken: string): Promise<ImdbMatch | null> {
@@ -688,6 +718,16 @@ export async function resolveImdbId(movie: KinoMovieInput, tmdbToken: string): P
     if (retried && isBetter(retried, best)) best = { ...retried, enrichedFrom: "paradisbio" };
   }
   if (best && best.confidence === "high") return best;
+
+  if (kinoYear(movie) !== null) {
+    const yearless = await findImdbId(withoutYear(movie), tmdbToken).catch(() => null);
+    // Without a year the search can't tell same-title remakes apart, so only
+    // a corroborated 1:1 title match counts; anything looser stays with the
+    // year-aware result and falls through to title stripping below.
+    if (yearless && yearless.confidence === "high" && isExactTitleMatch(movie, yearless) && isBetter(yearless, best)) {
+      return { ...yearless, enrichedFrom: "no-year" };
+    }
+  }
 
   // Variants are independent guesses about the same movie, so fire them all
   // at once instead of awaiting one at a time -- this is the difference
