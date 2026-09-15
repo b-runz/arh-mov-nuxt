@@ -135,9 +135,16 @@ export function normalizeTitle(s: string): string {
     // become word-breaking spaces instead of the letters they stand for
     // (e.g. "Troløs" -> "trol s" instead of "trolos"), which silently zeroes
     // out title-similarity against any transliterated/foreign spelling.
+    // å specifically transliterates to "aa", not "a" -- its official
+    // pre-1948 spelling and still how proper nouns are anglicized today
+    // (Århus/Aarhus, Håkon/Haakon). A bare "a" is wrong on both counts: it
+    // doesn't match that real convention, and it collapses an unrelated
+    // word into a real one -- "får" (sheep) normalizing to "far" (dad)
+    // wrongly exact-matched a Kino listing to an unrelated film called
+    // "F for Far".
     .replace(/æ/g, "ae")
     .replace(/ø/g, "o")
-    .replace(/å/g, "a")
+    .replace(/å/g, "aa")
     .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "")
     .replace(/[^a-z0-9]+/g, " ")
@@ -673,6 +680,13 @@ function isBetter(candidate: ImdbMatch, current: ImdbMatch | null): boolean {
  * "re-release") isn't decidable from the string alone; a pure-noise variant
  * just never scores well enough to win.
  */
+// Known non-title venue/version tags that Kino (and paradisbio.dk's own
+// pages, see paradisbio.ts) append or prepend around a dash -- "CIN" alone
+// is short and generic enough to coincidentally text-match unrelated real
+// titles (e.g. "Dabbe: Cin Çarpmasi"), so a dash-split side matching one of
+// these is dropped rather than kept as its own searchable candidate.
+const VENUE_VERSION_TAG = /^(CIN\b.*|Cin\s+Præs.*|Dk\s+\w+.*|Eng\s+\w+.*|orgtale.*)$/i;
+
 export function titleStrippingVariants(title: string): string[] {
   const variants = new Set<string>();
 
@@ -687,8 +701,8 @@ export function titleStrippingVariants(title: string): string[] {
   if (title.includes(" - ")) {
     const beforeLastDash = title.slice(0, title.lastIndexOf(" - ")).trim();
     const afterFirstDash = title.slice(title.indexOf(" - ") + 3).trim();
-    if (beforeLastDash) variants.add(beforeLastDash);
-    if (afterFirstDash) variants.add(afterFirstDash);
+    if (beforeLastDash && !VENUE_VERSION_TAG.test(beforeLastDash)) variants.add(beforeLastDash);
+    if (afterFirstDash && !VENUE_VERSION_TAG.test(afterFirstDash)) variants.add(afterFirstDash);
   }
 
   if (title.includes(":")) {
