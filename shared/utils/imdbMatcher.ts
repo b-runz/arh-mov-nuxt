@@ -182,13 +182,23 @@ function splitTrailingYear(title: string): { stripped: string; year: number | nu
   return { stripped: title.slice(0, m.index).trim(), year };
 }
 
+// Kino's premiere/productionYear fields use a "0001-01-01" sentinel for an
+// unknown date, which parses to literal year 1 via Date and -- left
+// unchecked -- reads as a real year, wrongly penalizing a correct
+// candidate's real release year in scoreCandidate (and, symmetrically,
+// wrongly rewarding a wrong candidate that simply has no year data on
+// IMDb to compare against). No real theatrical release predates 1920, so
+// anything under that is treated as "no year data" rather than a bogus one.
+const MIN_PLAUSIBLE_KINO_YEAR = 1920;
+
 function kinoYear(movie: KinoMovieInput): number | null {
   if (movie.productionYear && /^\d{4}$/.test(movie.productionYear)) {
-    return parseInt(movie.productionYear, 10);
+    const year = parseInt(movie.productionYear, 10);
+    return year >= MIN_PLAUSIBLE_KINO_YEAR ? year : null;
   }
   if (movie.premiere) {
     const year = new Date(movie.premiere).getFullYear();
-    if (!Number.isNaN(year)) return year;
+    if (!Number.isNaN(year) && year >= MIN_PLAUSIBLE_KINO_YEAR) return year;
   }
   return null;
 }
@@ -222,12 +232,15 @@ function scoreCandidate(movie: KinoMovieInput, candidate: Candidate): number {
 
   const rawKinoTitles = [movie.title, movie.titleOriginal].filter((t): t is string => !!t);
   const titleAnnotations = rawKinoTitles.map(splitTrailingYear);
-  // Both the raw title (with its "(YYYY)" annotation, if any) and the
-  // de-annotated version are scored, and the higher of the two wins -- the
-  // annotation is noise for similarity (those digits don't appear in any
-  // candidate's title) but stripping it unconditionally would be just as
-  // arbitrary as keeping it, so let the actual score decide per-candidate.
-  const kinoTitles = [...new Set([...rawKinoTitles, ...titleAnnotations.map((t) => t.stripped)])];
+  // Score against the raw title (with its "(YYYY)" annotation, if any) and
+  // every event/version-framing and parenthetical-original-title variant
+  // extracted from it (see extractCandidateTitles), and let the best-scoring
+  // one win -- e.g. "Soudain (All of a Sudden)" needs to be scored against
+  // "All of a Sudden" on its own to land a clean similarity match, not just
+  // against the combined string; keeping the raw string too means stripping
+  // it unconditionally is never required for a title that already matches
+  // as-is.
+  const kinoTitles = [...new Set([...rawKinoTitles, ...rawKinoTitles.flatMap(extractCandidateTitles)])];
   const candidateTitles = [candidate.title, candidate.originalTitle].filter((t): t is string => !!t);
   const titleScores = kinoTitles.flatMap((kt) => candidateTitles.map((ct) => titleSimilarity(kt, ct)));
   const maxTitleScore = Math.max(0, ...titleScores);
@@ -289,6 +302,19 @@ function scoreCandidate(movie: KinoMovieInput, candidate: Candidate): number {
   return score;
 }
 
+// Every distinct title string worth firing at a title-search API for one
+// Kino listing: its raw title/titleOriginal plus every event/version-framing
+// and parenthetical-original-title variant nested inside each (see
+// extractCandidateTitles) -- e.g. "Soudain (All of a Sudden)" also searches
+// "Soudain" and "All of a Sudden" individually, since a catalog may only
+// recognize one of the three forms.
+function candidateSearchTitles(movie: KinoMovieInput): string[] {
+  const bases = [movie.titleOriginal, movie.title].filter((t): t is string => !!t);
+  const all = new Set<string>();
+  for (const base of bases) for (const variant of extractCandidateTitles(base)) all.add(variant);
+  return [...all];
+}
+
 // ---- TMDB source ----
 
 const TMDB_BASE = "https://api.themoviedb.org/3";
@@ -334,7 +360,7 @@ async function tmdbDetails(token: string, id: number): Promise<TmdbMovieDetails>
 async function tmdbCandidates(movie: KinoMovieInput, token: string): Promise<Candidate[]> {
   if (!token) return [];
   const year = kinoYear(movie);
-  const queries = [...new Set([movie.titleOriginal, movie.title].filter((t): t is string => !!t))];
+  const queries = candidateSearchTitles(movie);
 
   const seen = new Map<number, TmdbSearchResult>();
   const collect = async (withYear: boolean) => {
@@ -440,7 +466,7 @@ async function imdbGraphqlSearch(term: string): Promise<ImdbSearchEntity[]> {
 }
 
 async function imdbGraphqlCandidates(movie: KinoMovieInput): Promise<Candidate[]> {
-  const queries = [...new Set([movie.titleOriginal, movie.title].filter((t): t is string => !!t))];
+  const queries = candidateSearchTitles(movie);
   const seen = new Map<string, ImdbSearchEntity>();
   const batches = await Promise.all(queries.map((q) => imdbGraphqlSearch(q).catch(() => [])));
   for (const batch of batches) for (const e of batch) seen.set(e.id, e);
@@ -495,7 +521,7 @@ async function imdbSuggest(term: string): Promise<SuggestEntity[]> {
 }
 
 async function suggestCandidates(movie: KinoMovieInput): Promise<Candidate[]> {
-  const queries = [...new Set([movie.titleOriginal, movie.title].filter((t): t is string => !!t))];
+  const queries = candidateSearchTitles(movie);
   const seen = new Map<string, SuggestEntity>();
   const batches = await Promise.all(queries.map((q) => imdbSuggest(q).catch(() => [])));
   for (const batch of batches) for (const e of batch) if (/^tt\d+$/.test(e.id)) seen.set(e.id, e);
@@ -634,24 +660,35 @@ function isBetter(candidate: ImdbMatch, current: ImdbMatch | null): boolean {
 }
 
 /**
- * Kino event/screening titles often wrap the real movie title in event
- * framing -- "Filmklubben: FANTASIA" (film club prefix), "Pitchblack
- * Playback : Vangelis: Blade Runner" (event name + composer prefix),
- * "Den fabelagtige Amelie fra Montmatre (re-release)" (trailing annotation).
- * These variants are tried as a last resort and only kept if they score
- * better than what we already have, so a generic-word false positive (e.g.
- * an art installation whose subtitle happens to coincide with an unrelated
- * film) can only replace "no match" / a weak guess, never a good one.
+ * Kino event/screening titles often wrap the real movie title in event or
+ * translation framing -- "Filmklubben: FANTASIA" (film club prefix),
+ * "Pitchblack Playback : Vangelis: Blade Runner" (event name + composer
+ * prefix), "Asfaltjunglen - CIN" (trailing venue/version tag after a dash),
+ * "CIN - Asfaltjunglen" (the same tag before it), "Soudain (All of a
+ * Sudden)" (original/translated title in parens), "Den fabelagtige Amelie
+ * fra Montmatre (re-release)" (trailing annotation instead). Every side of
+ * every split is kept as its own candidate -- for the parenthetical case
+ * that means both the outer title and the inner text, since which one is
+ * the searchable title (an alternate title) vs. noise (an annotation like
+ * "re-release") isn't decidable from the string alone; a pure-noise variant
+ * just never scores well enough to win.
  */
 export function titleStrippingVariants(title: string): string[] {
   const variants = new Set<string>();
 
-  const noParen = title.replace(/\s*\([^)]*\)\s*$/, "").trim();
-  if (noParen) variants.add(noParen);
+  const parenMatch = title.match(/^(.*?)\s*\(([^)]*)\)\s*$/);
+  if (parenMatch) {
+    const outer = parenMatch[1]!.trim();
+    const inner = parenMatch[2]!.trim();
+    if (outer) variants.add(outer);
+    if (inner) variants.add(inner);
+  }
 
   if (title.includes(" - ")) {
-    const withoutLastDash = title.slice(0, title.lastIndexOf(" - ")).trim();
-    if (withoutLastDash) variants.add(withoutLastDash);
+    const beforeLastDash = title.slice(0, title.lastIndexOf(" - ")).trim();
+    const afterFirstDash = title.slice(title.indexOf(" - ") + 3).trim();
+    if (beforeLastDash) variants.add(beforeLastDash);
+    if (afterFirstDash) variants.add(afterFirstDash);
   }
 
   if (title.includes(":")) {
@@ -667,6 +704,36 @@ export function titleStrippingVariants(title: string): string[] {
 
   variants.delete(title);
   return [...variants];
+}
+
+/**
+ * Every candidate title worth trying for a single Kino listing: the title
+ * itself (its trailing "(YYYY)" annotation dropped first, see
+ * splitTrailingYear, so those digits don't pollute similarity scoring) plus
+ * every variant titleStrippingVariants finds, expanded to a fixed point so
+ * combinations compose -- e.g. a dash-suffixed listing with a parenthetical
+ * original title inside it yields both the dash-stripped and paren-stripped
+ * forms, not just one pass of each.
+ */
+export function extractCandidateTitles(rawTitle: string): string[] {
+  const seed = splitTrailingYear(rawTitle).stripped;
+  const candidates = new Set<string>([seed]);
+
+  let frontier = [seed];
+  for (let pass = 0; pass < 3 && frontier.length > 0; pass++) {
+    const next: string[] = [];
+    for (const title of frontier) {
+      for (const variant of titleStrippingVariants(title)) {
+        if (!candidates.has(variant)) {
+          candidates.add(variant);
+          next.push(variant);
+        }
+      }
+    }
+    frontier = next;
+  }
+
+  return [...candidates];
 }
 
 /**
@@ -689,23 +756,29 @@ export function withoutYear(movie: KinoMovieInput): KinoMovieInput {
  * winning over merely-similar franchise siblings is unambiguous.
  */
 export function isExactTitleMatch(movie: Pick<KinoMovieInput, "title" | "titleOriginal">, match: Pick<ImdbMatch, "candidateTitle" | "candidateOriginalTitle">): boolean {
-  const kinoTitles = [movie.title, movie.titleOriginal].filter((t): t is string => !!t);
+  const rawKinoTitles = [movie.title, movie.titleOriginal].filter((t): t is string => !!t);
+  // Include extracted variants (e.g. the inner title of "Soudain (All of a
+  // Sudden)") so a bilingual/event-framed listing can still register as an
+  // exact match against the plain candidate title it actually refers to.
+  const kinoTitles = [...new Set([...rawKinoTitles, ...rawKinoTitles.flatMap(extractCandidateTitles)])];
   const candidateTitles = [match.candidateTitle, match.candidateOriginalTitle].filter(Boolean);
   return kinoTitles.some((kt) => candidateTitles.some((ct) => titleSimilarity(kt, ct) === 1));
 }
 
 /**
- * Fully-automatic resolution: run the cheap 3-source search first. If that
- * isn't already high confidence, try two fallbacks in order, keeping
- * whichever result scores best overall:
+ * Fully-automatic resolution: run the cheap 3-source search first. It
+ * already searches and scores every event/annotation/original-title variant
+ * of the listing's title (see extractCandidateTitles), so most event framing
+ * and bilingual titles resolve right here. If that isn't already high
+ * confidence, try two fallbacks in order, keeping whichever result scores
+ * best overall:
  *   1. Scrape the movie's cinema venue page (currently just Øst for Paradis
  *      / paradisbio.dk) for its original title / country / year / runtime,
  *      and retry the search with that filled in.
  *   2. Retry with Kino's year removed (see withoutYear), accepted only for
  *      a high-confidence, exact-title winner -- catches re-releases whose
- *      Danish premiere is years after the film's own release.
- *   3. Strip event/annotation framing from the title (see
- *      titleStrippingVariants) and retry the search with each variant.
+ *      Danish premiere is years after the film's own release, and listings
+ *      with no plausible year at all (see kinoYear's 1920 floor).
  */
 export async function resolveImdbId(movie: KinoMovieInput, tmdbToken: string): Promise<ImdbMatch | null> {
   let best = await findImdbId(movie, tmdbToken);
@@ -723,34 +796,10 @@ export async function resolveImdbId(movie: KinoMovieInput, tmdbToken: string): P
     const yearless = await findImdbId(withoutYear(movie), tmdbToken).catch(() => null);
     // Without a year the search can't tell same-title remakes apart, so only
     // a corroborated 1:1 title match counts; anything looser stays with the
-    // year-aware result and falls through to title stripping below.
+    // year-aware result.
     if (yearless && yearless.confidence === "high" && isExactTitleMatch(movie, yearless) && isBetter(yearless, best)) {
       return { ...yearless, enrichedFrom: "no-year" };
     }
-  }
-
-  // Variants are independent guesses about the same movie, so fire them all
-  // at once instead of awaiting one at a time -- this is the difference
-  // between paying for the slowest variant vs. the sum of all of them,
-  // which matters most for a title with a weak/absent base match (the case
-  // where every variant ends up needed). Selection below still walks the
-  // results in the original variant order so which one wins is unchanged
-  // from the sequential version.
-  const variants = titleStrippingVariants(movie.title);
-  const variantResults = await Promise.all(
-    variants.map((variant) => findImdbId({ ...movie, title: variant }, tmdbToken).catch(() => null))
-  );
-
-  for (const stripped of variantResults) {
-    if (!stripped) continue;
-
-    // Stripping is itself an unverified guess about what to throw away, so
-    // demand a clearer margin than the base search needs before trusting a
-    // "high" from it -- otherwise a generic word that happens to collide
-    // with some real movie gets silently accepted.
-    const candidate = stripped.confidence === "high" && stripped.margin < 5 ? { ...stripped, confidence: "low" as const } : stripped;
-    if (isBetter(candidate, best)) best = { ...candidate, enrichedFrom: "title-strip" };
-    if (best && best.confidence === "high") break;
   }
 
   return best;
