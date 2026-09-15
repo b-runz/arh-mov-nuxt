@@ -77,6 +77,17 @@ interface Candidate {
   popularityRank?: number | null; // lower = more popular (suggestion API only)
   titleAlreadyRelevant?: boolean; // true when the source already did alias/AKA matching
   posterPath?: string | null; // TMDB poster_path, only ever set by the tmdb source
+  /**
+   * The candidate's own Danish release/AKA title(s) (TMDB's per-country
+   * alternative_titles, only ever set by the tmdb source). Kino's title is
+   * usually the actual Danish title, not the English one -- e.g. "Shaun the
+   * Sheep Movie" released in Denmark as "F for Får" -- so without this, a
+   * correct match can only be inferred indirectly (year/type/popularity
+   * bonuses covering for near-zero text similarity against the English
+   * title). Scoring against the real Danish title directly turns that into
+   * a genuine, verifiable text match instead of a trust-the-source guess.
+   */
+  akaTitles?: string[];
 }
 
 type SourceName = "tmdb" | "imdb" | "suggest";
@@ -248,7 +259,13 @@ function scoreCandidate(movie: KinoMovieInput, candidate: Candidate): number {
   // it unconditionally is never required for a title that already matches
   // as-is.
   const kinoTitles = [...new Set([...rawKinoTitles, ...rawKinoTitles.flatMap(extractCandidateTitles)])];
-  const candidateTitles = [candidate.title, candidate.originalTitle].filter((t): t is string => !!t);
+  // Kino's title is usually the Danish release title, not the English or
+  // original-language one, so a candidate's Danish AKA (see akaTitles) is
+  // included here too -- without it, a correct match with a very different
+  // Danish title (e.g. "Shaun the Sheep Movie" / "F for Får") can only be
+  // inferred indirectly via year/type/popularity bonuses instead of a real
+  // text match.
+  const candidateTitles = [candidate.title, candidate.originalTitle, ...(candidate.akaTitles ?? [])].filter((t): t is string => !!t);
   const titleScores = kinoTitles.flatMap((kt) => candidateTitles.map((ct) => titleSimilarity(kt, ct)));
   const maxTitleScore = Math.max(0, ...titleScores);
   let titleComponent = maxTitleScore * 40;
@@ -342,6 +359,7 @@ interface TmdbMovieDetails {
   poster_path: string | null;
   production_countries: Array<{ iso_3166_1: string; name: string }>;
   external_ids: { imdb_id: string | null };
+  alternative_titles: { titles: Array<{ iso_3166_1: string; title: string }> };
 }
 
 function tmdbHeaders(token: string) {
@@ -357,7 +375,10 @@ async function tmdbSearch(token: string, query: string, year?: string): Promise<
 }
 
 async function tmdbDetails(token: string, id: number): Promise<TmdbMovieDetails> {
-  const res = await fetch(`${TMDB_BASE}/movie/${id}?append_to_response=external_ids&language=en-US`, {
+  // alternative_titles is appended alongside external_ids on the same
+  // request (no extra round-trip) so the Danish AKA title is available for
+  // scoring wherever a candidate's title is compared against Kino's.
+  const res = await fetch(`${TMDB_BASE}/movie/${id}?append_to_response=external_ids,alternative_titles&language=en-US`, {
     headers: tmdbHeaders(token),
   });
   if (!res.ok) throw new Error(`TMDB details failed: ${res.status}`);
@@ -398,6 +419,7 @@ async function tmdbCandidates(movie: KinoMovieInput, token: string): Promise<Can
     // correctly-labeled sources supply the type signal.
     typeText: null,
     posterPath: d.poster_path,
+    akaTitles: d.alternative_titles.titles.filter((t) => t.iso_3166_1 === "DK").map((t) => t.title),
   }));
 }
 
@@ -411,7 +433,7 @@ function findTmdbPosterFor(tmdbCands: Candidate[], target: { title: string; year
   let best: { posterPath: string; score: number } | null = null;
   for (const c of tmdbCands) {
     if (!c.posterPath) continue;
-    const sim = Math.max(titleSimilarity(target.title, c.title), titleSimilarity(target.title, c.originalTitle));
+    const sim = Math.max(titleSimilarity(target.title, c.title), titleSimilarity(target.title, c.originalTitle), ...(c.akaTitles ?? []).map((t) => titleSimilarity(target.title, t)));
     if (sim < 0.8) continue;
     if (target.year !== null && c.year !== null && Math.abs(target.year - c.year) > 1) continue;
     if (!best || sim > best.score) best = { posterPath: c.posterPath, score: sim };
