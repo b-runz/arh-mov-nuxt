@@ -4,6 +4,14 @@ import { getRating } from './imdb';
 import { resolveImdbId, type KinoMovieInput } from './imdbMatcher';
 import { get_poster_url } from './tmdb_poster';
 import { isPlaceholderPosterUrl } from './posterPlaceholder';
+import { runWithConcurrencyLimit } from './concurrencyLimit';
+
+// How many movies' worth of IMDb/TMDB enrichment run at once. A full-site
+// build enriches every currently-listed movie (~150), and each one fans out
+// to several TMDB/IMDb calls internally -- running all of them at once
+// created a sustained rate-limit condition (observed as repeated TMDB 429s
+// in production) that a short per-request retry can't ride out.
+const ENRICHMENT_CONCURRENCY = 5;
 
 export interface MovieEnrichmentDeps {
     resolveImdbId: typeof resolveImdbId;
@@ -122,7 +130,7 @@ export async function processData(
 ): Promise<Movie[]> {
     // Perform any further processing or rendering with the transformed data
     let movies: Record<string, Movie> = {}
-    let imdbPromises: Promise<void>[] = []
+    let enrichmentTasks: Array<() => Promise<void>> = []
     moment.locale("da")
 
     const apiMovies: ApiMovie[] = data?.data?.movieQuery?.getCurrentMovies ?? []
@@ -154,7 +162,7 @@ export async function processData(
 
             // The GraphQL schedule API doesn't expose an IMDb id directly,
             // so every movie is resolved through the matching algorithm.
-            imdbPromises.push(enrichMovieWithImdbData(movies, id, apiMovie, release_date, tmdbApiKey ?? "", deps));
+            enrichmentTasks.push(() => enrichMovieWithImdbData(movies, id, apiMovie, release_date, tmdbApiKey ?? "", deps));
         }
 
         const movie = movies[id]
@@ -175,8 +183,9 @@ export async function processData(
         }
     }
 
-    // Wait for all IMDB data to be fetched
-    await Promise.all(imdbPromises);
+    // Wait for all IMDB data to be fetched, at most ENRICHMENT_CONCURRENCY
+    // movies at a time (see its definition).
+    await runWithConcurrencyLimit(enrichmentTasks, ENRICHMENT_CONCURRENCY);
 
     return sortMoviesByPremiereDate(movies);
 }
