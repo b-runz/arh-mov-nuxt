@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
-import { titleStrippingVariants, classifyExactMatchTier } from "./imdbMatcher";
-import type { Candidate } from "./imdbMatcher";
+import { titleStrippingVariants, classifyExactMatchTier, isCorroborated } from "./imdbMatcher";
+import type { Candidate, SourceName } from "./imdbMatcher";
 
 describe("titleStrippingVariants", () => {
   test("produces both colon parts", () => {
@@ -98,5 +98,42 @@ describe("classifyExactMatchTier", () => {
     const movie = { title: "F for Får" };
     const c = candidate({ title: "Something Else", originalTitle: "Something Else Original", year: 1990, akaTitles: ["F for Får"] });
     expect(classifyExactMatchTier(movie, c)).toBe(3);
+  });
+});
+
+describe("isCorroborated", () => {
+  const sources = (...names: SourceName[]) => new Set(names);
+
+  test("tier 1 accepts any 2 sources regardless of votes", () => {
+    // Tier 1 already has a matching year from Kino's own, separate data
+    // backing it up, so any 2-of-3 source agreement is real corroboration.
+    expect(isCorroborated(1, sources("imdb", "suggest"), 0)).toBe(true);
+  });
+
+  test("tier 2/3 accept 2 sources when tmdb is one of them, regardless of votes", () => {
+    expect(isCorroborated(2, sources("tmdb", "imdb"), 0)).toBe(true);
+    expect(isCorroborated(3, sources("tmdb", "suggest"), 0)).toBe(true);
+  });
+
+  test("tier 2/3 accept 2 sources without tmdb when the candidate has real votes", () => {
+    expect(isCorroborated(2, sources("imdb", "suggest"), 68)).toBe(true);
+  });
+
+  test("tier 2/3 reject 2 sources without tmdb and with zero votes", () => {
+    // Regression: Kino's "Filmquiz" (a pub-quiz night, not a real film)
+    // coincidentally shares its name with an obscure 1991 film that only
+    // IMDb's own search and autocomplete "agreed" on (0 votes, no TMDB
+    // entry cross-linked) -- and the exact same fingerprint (0 votes,
+    // imdb+suggest only) turns up for at least one genuinely correct match
+    // too (a brand-new, not-yet-rated release), so this can't be told apart
+    // from a real film by evidence alone. Reported as low confidence rather
+    // than trusted, so the caller leaves it unresolved.
+    expect(isCorroborated(2, sources("imdb", "suggest"), 0)).toBe(false);
+    expect(isCorroborated(3, sources("imdb", "suggest"), null)).toBe(false);
+  });
+
+  test("a single source never corroborates, at any tier", () => {
+    expect(isCorroborated(1, sources("tmdb"), 100)).toBe(false);
+    expect(isCorroborated(2, sources("tmdb"), 100)).toBe(false);
   });
 });

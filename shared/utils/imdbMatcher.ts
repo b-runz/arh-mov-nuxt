@@ -88,9 +88,18 @@ export interface Candidate {
    * a genuine, verifiable text match instead of a trust-the-source guess.
    */
   akaTitles?: string[];
+  /**
+   * How many people have rated this title on IMDb, when the source that
+   * found it reports one (currently tmdb and imdb; the lightweight suggest
+   * API doesn't carry it). Used to tell a real, if brand-new or obscure,
+   * film apart from a coincidental exact-title match to something IMDb's own
+   * search/autocomplete surfaced but nothing else corroborates -- see
+   * isCorroborated.
+   */
+  voteCount?: number | null;
 }
 
-type SourceName = "tmdb" | "imdb" | "suggest";
+export type SourceName = "tmdb" | "imdb" | "suggest";
 
 const COUNTRY_ALIASES: Record<string, string> = {
   usa: "united states",
@@ -547,6 +556,7 @@ const IMDB_SEARCH_QUERY = `
               releaseYear { year }
               countriesOfOrigin { countries { text } }
               runtime { seconds }
+              ratingsSummary { voteCount }
             }
           }
         }
@@ -563,6 +573,7 @@ interface ImdbSearchEntity {
   releaseYear: { year: number } | null;
   countriesOfOrigin: { countries: Array<{ text: string }> } | null;
   runtime: { seconds: number } | null;
+  ratingsSummary: { voteCount: number } | null;
 }
 
 async function imdbGraphqlSearch(term: string): Promise<ImdbSearchEntity[]> {
@@ -596,6 +607,7 @@ async function imdbGraphqlCandidates(movie: KinoMovieInput): Promise<Candidate[]
     countries: e.countriesOfOrigin?.countries.map((c) => c.text) ?? [],
     runtimeMinutes: e.runtime ? Math.round(e.runtime.seconds / 60) : null,
     typeText: e.titleType?.text ?? null,
+    voteCount: e.ratingsSummary?.voteCount ?? null,
   }));
 }
 
@@ -664,7 +676,26 @@ function scoreAll(movie: KinoMovieInput, candidates: Candidate[], source: Source
     .map((candidate) => ({ source, candidate, score: scoreCandidate(movie, candidate), tier: classifyExactMatchTier(movie, candidate) }));
 }
 
-type ScoredEntry = { id: string; candidate: Candidate; rawScore: number; sources: Set<SourceName>; tier: ExactMatchTier | null };
+type ScoredEntry = { id: string; candidate: Candidate; rawScore: number; sources: Set<SourceName>; tier: ExactMatchTier | null; voteCount: number | null };
+
+/**
+ * Whether a tier match (see classifyExactMatchTier) has enough independent
+ * backing to trust at "high" confidence. Tier 1 already has a matching year
+ * from Kino's own, separate data, so any 2-of-3 source agreement is real
+ * corroboration. Tiers 2/3 trust an exact match with no year backing at all,
+ * so they need a real second opinion beyond just 2 sources: either TMDB (a
+ * genuinely independent database from IMDb's own search+autocomplete), or
+ * the candidate having actual IMDb votes -- some real-world evidence it's a
+ * known film, not just something IMDb's own search surfaced that nothing
+ * else can confirm (e.g. Kino's "Filmquiz", a pub-quiz night that
+ * coincidentally shares its name with an obscure, 0-vote 1991 film only
+ * IMDb's own endpoints "agreed" on).
+ */
+export function isCorroborated(tier: ExactMatchTier, sources: Set<SourceName>, voteCount: number | null | undefined): boolean {
+  if (sources.size < 2) return false;
+  if (tier === 1) return true;
+  return sources.has("tmdb") || (voteCount ?? 0) > 0;
+}
 
 function buildMatch(best: ScoredEntry, second: ScoredEntry | undefined, confidence: ImdbMatch["confidence"], tmdbCands: Candidate[]): ImdbMatch {
   const margin = second ? best.rawScore - second.rawScore : best.rawScore;
@@ -717,12 +748,13 @@ export async function findImdbId(movie: KinoMovieInput, tmdbToken: string): Prom
   ];
   if (all.length === 0) return null;
 
-  const byId = new Map<string, { bestScore: number; bestCandidate: Candidate; sources: Set<SourceName>; bestTier: ExactMatchTier | null }>();
+  const byId = new Map<string, { bestScore: number; bestCandidate: Candidate; sources: Set<SourceName>; bestTier: ExactMatchTier | null; bestVoteCount: number | null }>();
   for (const { source, candidate, score, tier } of all) {
     const id = candidate.imdbId!;
     const entry = byId.get(id);
+    const voteCount = candidate.voteCount ?? null;
     if (!entry) {
-      byId.set(id, { bestScore: score, bestCandidate: candidate, sources: new Set([source]), bestTier: tier });
+      byId.set(id, { bestScore: score, bestCandidate: candidate, sources: new Set([source]), bestTier: tier, bestVoteCount: voteCount });
     } else {
       entry.sources.add(source);
       if (score > entry.bestScore) {
@@ -730,6 +762,7 @@ export async function findImdbId(movie: KinoMovieInput, tmdbToken: string): Prom
         entry.bestCandidate = candidate;
       }
       if (tier !== null && (entry.bestTier === null || tier < entry.bestTier)) entry.bestTier = tier;
+      if (voteCount !== null && (entry.bestVoteCount === null || voteCount > entry.bestVoteCount)) entry.bestVoteCount = voteCount;
     }
   }
 
@@ -739,27 +772,40 @@ export async function findImdbId(movie: KinoMovieInput, tmdbToken: string): Prom
     rawScore: e.bestScore,
     sources: e.sources,
     tier: e.bestTier,
+    voteCount: e.bestVoteCount,
   }));
   const byRaw = [...entries].sort((a, b) => b.rawScore - a.rawScore);
 
   // "High" confidence via an exact-title tier, tried strictest first: title +
   // release date, then title alone, then Danish AKA title (see
-  // classifyExactMatchTier). Each still requires 2+ independently-queried
-  // sources to land on the same tt id -- corroboration alone isn't enough
-  // (see the fuzzy fallback below for why), but within a tier scoreCandidate
-  // is only ever used to break ties between multiple candidates that both
-  // reached it, never to gate whether the tier counts. A franchise-word /
-  // stale-year collision (e.g. Kino's re-release-premiere year for
-  // "Avengers: Endgame" coincidentally matching "Avengers: Doomsday"'s real
-  // year) never earns an exact-title tier, so it can't win here even with
-  // full 3-source agreement -- it falls through to the fuzzy ranking below,
-  // which still favors the exact-title candidate on text similarity alone.
+  // classifyExactMatchTier), each requiring the appropriate corroboration
+  // (see isCorroborated) -- within a tier, scoreCandidate is only ever used
+  // to break ties between multiple candidates that both reached it, never to
+  // gate whether the tier counts. A franchise-word / stale-year collision
+  // (e.g. Kino's re-release-premiere year for "Avengers: Endgame"
+  // coincidentally matching "Avengers: Doomsday"'s real year) never earns an
+  // exact-title tier, so it can't win here even with full 3-source agreement
+  // -- it falls through to the fuzzy ranking below, which still favors the
+  // exact-title candidate on text similarity alone.
+  //
+  // Tier 1 falls through to a later tier or the fuzzy fallback when it isn't
+  // corroborated, same as before. Tiers 2/3 don't: an exact match with no
+  // year backing that also fails their (weaker-evidence) corroboration bar
+  // is still very likely the right answer -- it's the only exact match found
+  // -- but the fuzzy fallback isn't a safer bet either. It can confidently
+  // resolve a colon-extracted fragment (e.g. "Let It Snow") to a completely
+  // different, well-evidenced real film instead of leaving things alone. So
+  // an uncorroborated tier 2/3 match is reported honestly as low confidence
+  // and returned as-is, rather than risking a worse, differently-wrong
+  // answer from the fuzzy fallback.
   for (const tier of [1, 2, 3] as const) {
-    const atTier = entries.filter((e) => e.tier === tier && e.sources.size >= 2).sort((a, b) => b.rawScore - a.rawScore);
+    const atTier = entries.filter((e) => e.tier === tier).sort((a, b) => b.rawScore - a.rawScore);
     if (atTier.length === 0) continue;
     const best = atTier[0]!;
     const second = byRaw.find((e) => e.id !== best.id);
-    return buildMatch(best, second, "high", tmdbCands);
+    if (isCorroborated(tier, best.sources, best.voteCount)) return buildMatch(best, second, "high", tmdbCands);
+    if (tier === 1) continue;
+    return buildMatch(best, second, "low", tmdbCands);
   }
 
   // No corroborated exact-title match at any tier -- fall back to the fuzzy
