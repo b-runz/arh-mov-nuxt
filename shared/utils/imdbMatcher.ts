@@ -66,7 +66,7 @@ export interface ImdbMatch {
   tmdbPosterUrl?: string;
 }
 
-interface Candidate {
+export interface Candidate {
   imdbId: string | null;
   title: string;
   originalTitle: string;
@@ -245,11 +245,89 @@ const NON_THEATRICAL_TYPES = new Set(["TV Episode", "TV Series", "Video", "Podca
 // unambiguously a new wide release.
 const WIDE_RELEASE_SHOW_THRESHOLD = 20;
 
+// Every title string worth comparing Kino's listing against: its raw
+// title/titleOriginal plus every event/version-framing and
+// parenthetical-original-title variant nested inside each (see
+// extractCandidateTitles) -- e.g. "Soudain (All of a Sudden)" also compares
+// as "Soudain" and "All of a Sudden" individually, since a candidate may
+// only carry one of the three forms.
+function kinoTitleVariants(movie: Pick<KinoMovieInput, "title" | "titleOriginal">): string[] {
+  const rawKinoTitles = [movie.title, movie.titleOriginal].filter((t): t is string => !!t);
+  return [...new Set([...rawKinoTitles, ...rawKinoTitles.flatMap(extractCandidateTitles)])];
+}
+
+// Every plausible release year Kino's listing gives us for this title: its
+// own premiere/productionYear field (see kinoYear) plus any "(YYYY)"
+// annotation baked into the title or titleOriginal strings themselves (see
+// splitTrailingYear) -- either source can be the trustworthy one depending
+// on the listing, so both are offered up rather than picking one.
+function movieYearCandidates(movie: KinoMovieInput): number[] {
+  const rawKinoTitles = [movie.title, movie.titleOriginal].filter((t): t is string => !!t);
+  const titleAnnotations = rawKinoTitles.map(splitTrailingYear);
+  return [...new Set([kinoYear(movie), ...titleAnnotations.map((t) => t.year)].filter((y): y is number => y !== null))];
+}
+
+export type ExactMatchTier = 1 | 2 | 3;
+
+function matchesExactly(titles: string[], candidateTitle: string): boolean {
+  return titles.some((t) => titleSimilarity(t, candidateTitle) === 1);
+}
+
+/**
+ * How strongly a candidate's own title text matches Kino's listing, as a
+ * strict priority ladder rather than a fuzzy score:
+ *   1. Exact title match (candidate.title or .originalTitle) with a release
+ *      year within 1 of one Kino gives us.
+ *   2. Exact match against Kino's raw, unmodified title/titleOriginal (not
+ *      one of the event/version-framing or original-title fragments split
+ *      out of it -- see extractCandidateTitles) despite a mismatched year --
+ *      catches re-releases whose Danish premiere is years after the film's
+ *      own release, however large that gap is: a real re-release can be any
+ *      age (7 years or 50), so there's no sound cutoff to tune here.
+ *   3. No exact match on the primary title, but an exact match against the
+ *      candidate's own Danish AKA title (see Candidate.akaTitles).
+ *   null otherwise -- including an exact match that only exists because WE
+ *   split Kino's title into a fragment (e.g. "Dune" out of "Dune: Del 3")
+ *   despite a mismatched year. That distinction matters: Kino's raw title,
+ *   or the candidate's own official AKA, coinciding exactly with an
+ *   unrelated film is astronomically unlikely regardless of the year gap --
+ *   but a single reused franchise word is not (e.g. "Dune" (1984)
+ *   exact-matching "Dune: Del 3"'s "Dune" fragment, when the real match is
+ *   the textually-unrelated "Dune: Part Three"), so a fragment-only match is
+ *   trusted only when the year actually corroborates it (tier 1), leaving
+ *   the rest to the year-aware fuzzy fallback, which already scores "just a
+ *   different, unrelated film" down correctly via its own year penalty.
+ * "Exact" here is strict string equality after normalization (titleSimilarity
+ * === 1) -- the word-containment shortcut that gives partial credit for e.g.
+ * "Avengers" inside "Avengers: Doomsday" does NOT qualify. That distinction
+ * matters: Kino's re-release premiere for "Avengers: Endgame" can read as a
+ * future year that coincidentally matches an unrelated, currently-hyped
+ * "Avengers: Doomsday", which only ever share the bare franchise word, never
+ * the full title -- so it's disqualified from every tier here, however
+ * strong that partial similarity looks to the fuzzy scoreCandidate below.
+ */
+export function classifyExactMatchTier(movie: KinoMovieInput, candidate: Candidate): ExactMatchTier | null {
+  const rawKinoTitles = [movie.title, movie.titleOriginal].filter((t): t is string => !!t);
+  const kinoTitles = kinoTitleVariants(movie);
+
+  const exactOnRaw = matchesExactly(rawKinoTitles, candidate.title) || matchesExactly(rawKinoTitles, candidate.originalTitle);
+  const exactOnAny = exactOnRaw || matchesExactly(kinoTitles, candidate.title) || matchesExactly(kinoTitles, candidate.originalTitle);
+  const akaExact = (candidate.akaTitles ?? []).some((aka) => matchesExactly(kinoTitles, aka));
+
+  if (!exactOnAny && !akaExact) return null;
+
+  const yearCandidates = movieYearCandidates(movie);
+  const yearMatch = candidate.year !== null && yearCandidates.some((y) => Math.abs(y - candidate.year!) <= 1);
+  if (exactOnAny && yearMatch) return 1;
+
+  if (exactOnRaw) return 2;
+  if (akaExact) return 3;
+  return null;
+}
+
 function scoreCandidate(movie: KinoMovieInput, candidate: Candidate): number {
   let score = 0;
 
-  const rawKinoTitles = [movie.title, movie.titleOriginal].filter((t): t is string => !!t);
-  const titleAnnotations = rawKinoTitles.map(splitTrailingYear);
   // Score against the raw title (with its "(YYYY)" annotation, if any) and
   // every event/version-framing and parenthetical-original-title variant
   // extracted from it (see extractCandidateTitles), and let the best-scoring
@@ -258,7 +336,7 @@ function scoreCandidate(movie: KinoMovieInput, candidate: Candidate): number {
   // against the combined string; keeping the raw string too means stripping
   // it unconditionally is never required for a title that already matches
   // as-is.
-  const kinoTitles = [...new Set([...rawKinoTitles, ...rawKinoTitles.flatMap(extractCandidateTitles)])];
+  const kinoTitles = kinoTitleVariants(movie);
   // Kino's title is usually the Danish release title, not the English or
   // original-language one, so a candidate's Danish AKA (see akaTitles) is
   // included here too -- without it, a correct match with a very different
@@ -278,7 +356,7 @@ function scoreCandidate(movie: KinoMovieInput, candidate: Candidate): number {
   // (or vice versa) -- try every year Kino gives us for this title and keep
   // whichever produces the best-scoring match against the candidate, rather
   // than hard-coding which source to trust.
-  const yearCandidates = [...new Set([kinoYear(movie), ...titleAnnotations.map((t) => t.year)].filter((y): y is number => y !== null))];
+  const yearCandidates = movieYearCandidates(movie);
   const isWideRelease = (movie.showCount ?? 0) >= WIDE_RELEASE_SHOW_THRESHOLD;
   const isCurrentRelease = candidate.year !== null && Math.abs(candidate.year - new Date().getFullYear()) <= 1;
 
@@ -390,18 +468,28 @@ async function tmdbCandidates(movie: KinoMovieInput, token: string): Promise<Can
   const year = kinoYear(movie);
   const queries = candidateSearchTitles(movie);
 
-  const seen = new Map<number, TmdbSearchResult>();
   const collect = async (withYear: boolean) => {
+    const seen = new Map<number, TmdbSearchResult>();
     const batches = await Promise.all(
       queries.map((q) => tmdbSearch(token, q, withYear && year ? String(year) : undefined).catch(() => []))
     );
-    for (const batch of batches) for (const r of batch) seen.set(r.id, r);
+    for (const batch of batches) for (const r of batch) if (!seen.has(r.id)) seen.set(r.id, r);
+    return [...seen.values()];
   };
-  await collect(true);
-  if (seen.size === 0 && year) await collect(false);
 
-  const top = [...seen.values()].slice(0, 6);
-  const details = await Promise.all(top.map((c) => tmdbDetails(token, c.id).catch(() => null)));
+  // Always query both with Kino's year (when known) and without it, and keep
+  // up to 6 results from each independently -- TMDB's own primary_release_year
+  // filter can silently exclude the correct match server side when Kino's
+  // year is wrong (e.g. a re-release's screening date misread as the film's
+  // year), and if the year-filtered pass alone already fills a combined
+  // top-N cut, the unfiltered pass's results -- including the real match --
+  // never get a chance to be seen at all.
+  const withYear = year ? await collect(true) : [];
+  const dateless = await collect(false);
+  const top = new Map<number, TmdbSearchResult>();
+  for (const r of [...withYear.slice(0, 6), ...dateless.slice(0, 6)]) top.set(r.id, r);
+
+  const details = await Promise.all([...top.values()].map((c) => tmdbDetails(token, c.id).catch(() => null)));
 
   return details.filter((d): d is TmdbMovieDetails => d !== null).map((d) => ({
     imdbId: d.external_ids.imdb_id,
@@ -571,72 +659,14 @@ async function suggestCandidates(movie: KinoMovieInput): Promise<Candidate[]> {
 // ---- Orchestration: pool all sources, require corroboration ----
 
 function scoreAll(movie: KinoMovieInput, candidates: Candidate[], source: SourceName) {
-  return candidates.filter((c) => c.imdbId).map((candidate) => ({ source, candidate, score: scoreCandidate(movie, candidate) }));
+  return candidates
+    .filter((c) => c.imdbId)
+    .map((candidate) => ({ source, candidate, score: scoreCandidate(movie, candidate), tier: classifyExactMatchTier(movie, candidate) }));
 }
 
-export async function findImdbId(movie: KinoMovieInput, tmdbToken: string): Promise<ImdbMatch | null> {
-  if (!movie.title) return null;
+type ScoredEntry = { id: string; candidate: Candidate; rawScore: number; sources: Set<SourceName>; tier: ExactMatchTier | null };
 
-  const [tmdbCands, imdbCands, suggestCands] = await Promise.all([
-    tmdbCandidates(movie, tmdbToken).catch(() => []),
-    imdbGraphqlCandidates(movie).catch(() => []),
-    suggestCandidates(movie).catch(() => []),
-  ]);
-
-  const all = [
-    ...scoreAll(movie, tmdbCands, "tmdb"),
-    ...scoreAll(movie, imdbCands, "imdb"),
-    ...scoreAll(movie, suggestCands, "suggest"),
-  ];
-  if (all.length === 0) return null;
-
-  const byId = new Map<string, { bestScore: number; bestCandidate: Candidate; sources: Set<SourceName> }>();
-  for (const { source, candidate, score } of all) {
-    const id = candidate.imdbId!;
-    const entry = byId.get(id);
-    if (!entry) {
-      byId.set(id, { bestScore: score, bestCandidate: candidate, sources: new Set([source]) });
-    } else {
-      entry.sources.add(source);
-      if (score > entry.bestScore) {
-        entry.bestScore = score;
-        entry.bestCandidate = candidate;
-      }
-    }
-  }
-
-  const entries = [...byId.entries()].map(([id, e]) => ({
-    id,
-    candidate: e.bestCandidate,
-    rawScore: e.bestScore,
-    sources: e.sources,
-  }));
-
-  // "High" confidence requires 2+ independently-queried sources to land on
-  // the same tt id AND that id to already have a credible score on its own
-  // merits -- otherwise two engines sharing the same blind spot (e.g. both
-  // mangling a special character the same way) can "agree" on a wrong
-  // answer. Corroboration only ever promotes to high; it never influences
-  // the fallback ranking below, so it can't bury a stronger single-source
-  // exact match under a weak coincidental agreement.
-  const agreed = entries.filter((e) => e.sources.size >= 2 && e.rawScore >= 40).sort((a, b) => b.rawScore - a.rawScore);
-  const byRaw = [...entries].sort((a, b) => b.rawScore - a.rawScore);
-
-  let confidence: ImdbMatch["confidence"];
-  let best: (typeof entries)[number];
-  let second: (typeof entries)[number] | undefined;
-
-  if (agreed.length > 0) {
-    confidence = "high";
-    best = agreed[0]!;
-    second = byRaw.find((e) => e.id !== best.id);
-  } else {
-    best = byRaw[0]!;
-    second = byRaw[1];
-    const margin = second ? best.rawScore - second.rawScore : best.rawScore;
-    confidence = best.rawScore >= 65 && margin >= 20 ? "medium" : "low";
-  }
-
+function buildMatch(best: ScoredEntry, second: ScoredEntry | undefined, confidence: ImdbMatch["confidence"], tmdbCands: Candidate[]): ImdbMatch {
   const margin = second ? best.rawScore - second.rawScore : best.rawScore;
   const sourceLabel = [...best.sources].join("+");
 
@@ -669,6 +699,95 @@ export async function findImdbId(movie: KinoMovieInput, tmdbToken: string): Prom
     conflict,
     tmdbPosterUrl,
   };
+}
+
+export async function findImdbId(movie: KinoMovieInput, tmdbToken: string): Promise<ImdbMatch | null> {
+  if (!movie.title) return null;
+
+  const [tmdbCands, imdbCands, suggestCands] = await Promise.all([
+    tmdbCandidates(movie, tmdbToken).catch(() => []),
+    imdbGraphqlCandidates(movie).catch(() => []),
+    suggestCandidates(movie).catch(() => []),
+  ]);
+
+  const all = [
+    ...scoreAll(movie, tmdbCands, "tmdb"),
+    ...scoreAll(movie, imdbCands, "imdb"),
+    ...scoreAll(movie, suggestCands, "suggest"),
+  ];
+  if (all.length === 0) return null;
+
+  const byId = new Map<string, { bestScore: number; bestCandidate: Candidate; sources: Set<SourceName>; bestTier: ExactMatchTier | null }>();
+  for (const { source, candidate, score, tier } of all) {
+    const id = candidate.imdbId!;
+    const entry = byId.get(id);
+    if (!entry) {
+      byId.set(id, { bestScore: score, bestCandidate: candidate, sources: new Set([source]), bestTier: tier });
+    } else {
+      entry.sources.add(source);
+      if (score > entry.bestScore) {
+        entry.bestScore = score;
+        entry.bestCandidate = candidate;
+      }
+      if (tier !== null && (entry.bestTier === null || tier < entry.bestTier)) entry.bestTier = tier;
+    }
+  }
+
+  const entries: ScoredEntry[] = [...byId.entries()].map(([id, e]) => ({
+    id,
+    candidate: e.bestCandidate,
+    rawScore: e.bestScore,
+    sources: e.sources,
+    tier: e.bestTier,
+  }));
+  const byRaw = [...entries].sort((a, b) => b.rawScore - a.rawScore);
+
+  // "High" confidence via an exact-title tier, tried strictest first: title +
+  // release date, then title alone, then Danish AKA title (see
+  // classifyExactMatchTier). Each still requires 2+ independently-queried
+  // sources to land on the same tt id -- corroboration alone isn't enough
+  // (see the fuzzy fallback below for why), but within a tier scoreCandidate
+  // is only ever used to break ties between multiple candidates that both
+  // reached it, never to gate whether the tier counts. A franchise-word /
+  // stale-year collision (e.g. Kino's re-release-premiere year for
+  // "Avengers: Endgame" coincidentally matching "Avengers: Doomsday"'s real
+  // year) never earns an exact-title tier, so it can't win here even with
+  // full 3-source agreement -- it falls through to the fuzzy ranking below,
+  // which still favors the exact-title candidate on text similarity alone.
+  for (const tier of [1, 2, 3] as const) {
+    const atTier = entries.filter((e) => e.tier === tier && e.sources.size >= 2).sort((a, b) => b.rawScore - a.rawScore);
+    if (atTier.length === 0) continue;
+    const best = atTier[0]!;
+    const second = byRaw.find((e) => e.id !== best.id);
+    return buildMatch(best, second, "high", tmdbCands);
+  }
+
+  // No corroborated exact-title match at any tier -- fall back to the fuzzy
+  // score + source-agreement ranking. "High" here requires 2+ independently-
+  // queried sources to land on the same tt id AND that id to already have a
+  // credible score on its own merits -- otherwise two engines sharing the
+  // same blind spot (e.g. both mangling a special character the same way)
+  // can "agree" on a wrong answer. Corroboration only ever promotes to high;
+  // it never influences the ranking, so it can't bury a stronger
+  // single-source exact match under a weak coincidental agreement.
+  const agreed = entries.filter((e) => e.sources.size >= 2 && e.rawScore >= 40).sort((a, b) => b.rawScore - a.rawScore);
+
+  let confidence: ImdbMatch["confidence"];
+  let best: ScoredEntry;
+  let second: ScoredEntry | undefined;
+
+  if (agreed.length > 0) {
+    confidence = "high";
+    best = agreed[0]!;
+    second = byRaw.find((e) => e.id !== best.id);
+  } else {
+    best = byRaw[0]!;
+    second = byRaw[1];
+    const margin = second ? best.rawScore - second.rawScore : best.rawScore;
+    confidence = best.rawScore >= 65 && margin >= 20 ? "medium" : "low";
+  }
+
+  return buildMatch(best, second, confidence, tmdbCands);
 }
 
 function mergeWithParadisbio(movie: KinoMovieInput, facts: { originalTitle: string | null; country: string | null; year: number | null; runtimeMinutes: number | null }): KinoMovieInput {
@@ -773,48 +892,15 @@ export function extractCandidateTitles(rawTitle: string): string[] {
 }
 
 /**
- * The same listing with every year signal removed. Kino's premiere is the
- * *Danish* premiere, so for a re-release it's the re-release date, not the
- * film's year (e.g. "Avengers: Endgame" listed with a 2026 premiere). Also
- * drops showCount: the wide-release heuristic in scoreCandidate rewards
- * candidate recency as a stand-in for a stale year, which is exactly the
- * signal a year-less retry is trying to switch off.
- */
-export function withoutYear(movie: KinoMovieInput): KinoMovieInput {
-  return { ...movie, premiere: undefined, productionYear: undefined, showCount: undefined };
-}
-
-/**
- * True when the match's title is a 1:1 normalized match for the Kino title
- * (or either side's original title). Used to gate the year-less retry: with
- * no year to discriminate, a same-title remake (Moana 2016 vs 2026) is a
- * coin flip and must not be accepted, but a single exact-title candidate
- * winning over merely-similar franchise siblings is unambiguous.
- */
-export function isExactTitleMatch(movie: Pick<KinoMovieInput, "title" | "titleOriginal">, match: Pick<ImdbMatch, "candidateTitle" | "candidateOriginalTitle">): boolean {
-  const rawKinoTitles = [movie.title, movie.titleOriginal].filter((t): t is string => !!t);
-  // Include extracted variants (e.g. the inner title of "Soudain (All of a
-  // Sudden)") so a bilingual/event-framed listing can still register as an
-  // exact match against the plain candidate title it actually refers to.
-  const kinoTitles = [...new Set([...rawKinoTitles, ...rawKinoTitles.flatMap(extractCandidateTitles)])];
-  const candidateTitles = [match.candidateTitle, match.candidateOriginalTitle].filter(Boolean);
-  return kinoTitles.some((kt) => candidateTitles.some((ct) => titleSimilarity(kt, ct) === 1));
-}
-
-/**
  * Fully-automatic resolution: run the cheap 3-source search first. It
- * already searches and scores every event/annotation/original-title variant
- * of the listing's title (see extractCandidateTitles), so most event framing
- * and bilingual titles resolve right here. If that isn't already high
- * confidence, try two fallbacks in order, keeping whichever result scores
- * best overall:
- *   1. Scrape the movie's cinema venue page (currently just Øst for Paradis
- *      / paradisbio.dk) for its original title / country / year / runtime,
- *      and retry the search with that filled in.
- *   2. Retry with Kino's year removed (see withoutYear), accepted only for
- *      a high-confidence, exact-title winner -- catches re-releases whose
- *      Danish premiere is years after the film's own release, and listings
- *      with no plausible year at all (see kinoYear's 1920 floor).
+ * already tries every exact-match tier (title + release date, then title
+ * alone, then Danish AKA title, see classifyExactMatchTier) before falling
+ * back to fuzzy scoring, so most event framing, re-releases with a stale
+ * premiere date, and bilingual titles resolve right here. If that isn't
+ * already high confidence, scrape the movie's cinema venue page (currently
+ * just Øst for Paradis / paradisbio.dk) for its original title / country /
+ * year / runtime, and retry the same search with that filled in, keeping
+ * whichever result scores best overall.
  */
 export async function resolveImdbId(movie: KinoMovieInput, tmdbToken: string): Promise<ImdbMatch | null> {
   let best = await findImdbId(movie, tmdbToken);
@@ -825,17 +911,6 @@ export async function resolveImdbId(movie: KinoMovieInput, tmdbToken: string): P
     const enriched = mergeWithParadisbio(movie, facts);
     const retried = await findImdbId(enriched, tmdbToken).catch(() => null);
     if (retried && isBetter(retried, best)) best = { ...retried, enrichedFrom: "paradisbio" };
-  }
-  if (best && best.confidence === "high") return best;
-
-  if (kinoYear(movie) !== null) {
-    const yearless = await findImdbId(withoutYear(movie), tmdbToken).catch(() => null);
-    // Without a year the search can't tell same-title remakes apart, so only
-    // a corroborated 1:1 title match counts; anything looser stays with the
-    // year-aware result.
-    if (yearless && yearless.confidence === "high" && isExactTitleMatch(movie, yearless) && isBetter(yearless, best)) {
-      return { ...yearless, enrichedFrom: "no-year" };
-    }
   }
 
   return best;
