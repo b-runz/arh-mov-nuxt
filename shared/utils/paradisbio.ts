@@ -12,6 +12,8 @@
 // confidence), so occasional scrape failures just mean no enrichment, not a
 // broken pipeline.
 
+import { fetchWithRetry } from "./fetchRetry";
+
 export interface ParadisbioFacts {
   originalTitle: string | null;
   country: string | null;
@@ -38,7 +40,7 @@ function decodeHtmlEntities(s: string): string {
 }
 
 async function fetchIndex(): Promise<Map<string, string>> {
-  const res = await fetch(`${BASE}/upcomming_movies/`, { headers: HEADERS });
+  const res = await fetchWithRetry(`${BASE}/upcomming_movies/`, { headers: HEADERS });
   if (!res.ok) throw new Error(`paradisbio upcoming list failed: ${res.status}`);
   const html = await res.text();
   const map = new Map<string, string>();
@@ -117,7 +119,7 @@ export async function fetchParadisbioFacts(kinoTitle: string): Promise<Paradisbi
   }
 
   if (!url) return null;
-  const res = await fetch(`${BASE}${url}`, { headers: HEADERS });
+  const res = await fetchWithRetry(`${BASE}${url}`, { headers: HEADERS });
   if (!res.ok) return null;
   return parseFacts(await res.text());
 }

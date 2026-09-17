@@ -20,6 +20,7 @@
 // internal IMDb APIs (used by imdb.com itself).
 
 import { fetchParadisbioFacts } from "./paradisbio";
+import { fetchWithRetry } from "./fetchRetry";
 
 export interface KinoMovieInput {
   title: string;
@@ -456,7 +457,7 @@ function tmdbHeaders(token: string) {
 async function tmdbSearch(token: string, query: string, year?: string): Promise<TmdbSearchResult[]> {
   const params = new URLSearchParams({ query, include_adult: "false", language: "en-US" });
   if (year) params.set("primary_release_year", year);
-  const res = await fetch(`${TMDB_BASE}/search/movie?${params}`, { headers: tmdbHeaders(token) });
+  const res = await fetchWithRetry(`${TMDB_BASE}/search/movie?${params}`, { headers: tmdbHeaders(token) });
   if (!res.ok) throw new Error(`TMDB search failed: ${res.status}`);
   return (await res.json()).results as TmdbSearchResult[];
 }
@@ -465,7 +466,7 @@ async function tmdbDetails(token: string, id: number): Promise<TmdbMovieDetails>
   // alternative_titles is appended alongside external_ids on the same
   // request (no extra round-trip) so the Danish AKA title is available for
   // scoring wherever a candidate's title is compared against Kino's.
-  const res = await fetch(`${TMDB_BASE}/movie/${id}?append_to_response=external_ids,alternative_titles&language=en-US`, {
+  const res = await fetchWithRetry(`${TMDB_BASE}/movie/${id}?append_to_response=external_ids,alternative_titles&language=en-US`, {
     headers: tmdbHeaders(token),
   });
   if (!res.ok) throw new Error(`TMDB details failed: ${res.status}`);
@@ -577,7 +578,7 @@ interface ImdbSearchEntity {
 }
 
 async function imdbGraphqlSearch(term: string): Promise<ImdbSearchEntity[]> {
-  const res = await fetch(IMDB_GRAPHQL_ENDPOINT, {
+  const res = await fetchWithRetry(IMDB_GRAPHQL_ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -643,7 +644,7 @@ interface SuggestEntity {
 
 async function imdbSuggest(term: string): Promise<SuggestEntity[]> {
   const url = `${IMDB_SUGGEST_ENDPOINT}/${encodeURIComponent(term.trim())}.json?includeVideos=0`;
-  const res = await fetch(url);
+  const res = await fetchWithRetry(url);
   if (!res.ok) throw new Error(`IMDb suggest failed: ${res.status}`);
   const json = await res.json();
   return (json.d ?? []) as SuggestEntity[];

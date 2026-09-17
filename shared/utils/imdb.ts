@@ -1,3 +1,5 @@
+import { fetchWithRetry } from "./fetchRetry";
+
 export interface ImdbData {
     rating: string;
     datePublished: string;
@@ -37,26 +39,22 @@ type ImdbRatingResponse = {
 
 // Helper function to make HTTPS requests with proper headers
 async function makeHttpsRequest(url: string, body: string): Promise<ImdbRatingResponse> {
-    try {
-        const response = await $fetch<ImdbRatingResponse>(url, {
-            method: 'POST',
-            body: body,
-            headers: {
-                'Content-Type': 'application/json',
-                // IMDb's edge returns 403 without a same-site Referer/Origin,
-                // regardless of caller IP -- reproduced with plain curl and
-                // Node's native fetch, not just from GitHub Actions.
-                'Referer': 'https://www.imdb.com/',
-                'Origin': 'https://www.imdb.com'
-            }
-        });
-
-        return response;
-    } catch (error: any) {
-        // $fetch throws errors for HTTP error statuses
-        if (error?.status || error?.statusCode) {
-            throw new Error(`HTTP ${error.status || error.statusCode}: ${error.statusText || error.message}`);
+    const response = await fetchWithRetry(url, {
+        method: 'POST',
+        body: body,
+        headers: {
+            'Content-Type': 'application/json',
+            // IMDb's edge returns 403 without a same-site Referer/Origin,
+            // regardless of caller IP -- reproduced with plain curl and
+            // Node's native fetch, not just from GitHub Actions.
+            'Referer': 'https://www.imdb.com/',
+            'Origin': 'https://www.imdb.com'
         }
-        throw error;
+    });
+
+    if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
+
+    return response.json() as Promise<ImdbRatingResponse>;
 }

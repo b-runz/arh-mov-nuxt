@@ -1,3 +1,5 @@
+import { fetchWithRetry } from "./fetchRetry";
+
 // Define the type for the TMDB API response
 interface TMDBResponse {
     movie_results?: Array<{
@@ -17,18 +19,22 @@ export async function get_poster_url(tt: string, tmdbApiKey: string) : Promise <
     // otherwise already-available, no-extra-request data) instead of
     // falling through to it -- turning one flaky request into a
     // permanently missing poster instead of just a missed optimization.
+    // fetchWithRetry already retries transient failures (network errors,
+    // rate limiting, 5xx) before giving up, so this only triggers on a
+    // persistent failure or a genuine client error.
     let response: TMDBResponse;
     try {
-        response = await $fetch<TMDBResponse>(url, {
+        const res = await fetchWithRetry(url, {
             method: 'GET',
             headers: {
                 'accept': 'application/json',
                 'Authorization': `Bearer ${bearer}`
             }
         });
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        response = await res.json() as TMDBResponse;
     } catch (error) {
-        const status = (error as any)?.response?.status ?? (error as any)?.statusCode ?? "no response";
-        console.warn(`[tmdb_poster] find/${tt} failed (status: ${status}): ${(error as Error)?.message ?? error}`);
+        console.warn(`[tmdb_poster] find/${tt} failed: ${(error as Error)?.message ?? error}`);
         return "";
     }
 
