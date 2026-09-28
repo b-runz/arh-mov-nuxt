@@ -48,6 +48,10 @@ jobs:
       - name: Static HTML export with Nuxt
         env:
           TMDB_READ_TOKEN: ${{ secrets.TMDB_READ_TOKEN }}
+          # Public by design -- this is just the proxy's URL, not a secret.
+          # The function key that actually gates it is entered by each user
+          # and stored in their own browser (see pages/recommend.vue).
+          NUXT_PUBLIC_JEV_PROXY_URL: https://film-brj-one-jev.azurewebsites.net/api/jevRecommend
         run: bun run generate
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
