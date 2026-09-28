@@ -18,6 +18,12 @@ export default defineNuxtConfig({
     payloadExtraction: false
   },
   runtimeConfig: {
-    tmdbApiKey: process.env.TMDB_READ_TOKEN
+    tmdbApiKey: process.env.TMDB_READ_TOKEN,
+    public: {
+      // The Jev proxy (see azure-functions/jev-proxy) is a separate
+      // deployable, so its URL is a browser-visible public config rather
+      // than a secret -- the key it holds never reaches this app.
+      jevProxyUrl: process.env.NUXT_PUBLIC_JEV_PROXY_URL || 'http://localhost:7071/api/jevRecommend'
+    }
   }
 })

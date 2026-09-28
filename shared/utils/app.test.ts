@@ -43,7 +43,7 @@ function fakeDeps(overrides: Partial<MovieEnrichmentDeps> = {}): MovieEnrichment
   return {
     resolveImdbId: mock(async () => fakeMatch()),
     getRating: mock(async () => ({ rating: "8.5", datePublished: "" })),
-    getPosterUrl: mock(async () => ""),
+    getMovieMetadata: mock(async () => ({ poster: "", plot: "", language: "" })),
     isPlaceholderPosterUrl: mock(async () => false),
     ...overrides,
   };
@@ -63,6 +63,19 @@ describe("processData", () => {
     expect(movies[0]!.imdb_link).toBe("tt1234567");
   });
 
+  test("metadata (plot/language) is fetched for a matched movie and applied", async () => {
+    const deps = fakeDeps({
+      resolveImdbId: mock(async () => fakeMatch()),
+      getRating: mock(async () => ({ rating: "8.5", datePublished: "" })),
+      getMovieMetadata: mock(async () => ({ poster: "https://example.com/poster.jpg", plot: "A test plot.", language: "da" })),
+    });
+
+    const movies = await processData(apiData(), "tmdb-token", deps);
+
+    expect(movies[0]!.plot).toBe("A test plot.");
+    expect(movies[0]!.language).toBe("da");
+  });
+
   test("a low-confidence match is not applied -- rating stays unresolved", async () => {
     const deps = fakeDeps({
       resolveImdbId: mock(async () => fakeMatch({ confidence: "low" })),
@@ -80,7 +93,7 @@ describe("processData", () => {
     const deps = fakeDeps({
       resolveImdbId: mock(async () => fakeMatch()),
       getRating: mock(async () => ({ rating: "8.5", datePublished: "" })),
-      getPosterUrl: mock(async () => "https://image.tmdb.org/t/p/w500/real.jpg"),
+      getMovieMetadata: mock(async () => ({ poster: "https://image.tmdb.org/t/p/w500/real.jpg", plot: "A test plot.", language: "en" })),
       isPlaceholderPosterUrl: mock(async (url: string) => url === "https://cdn.sanity.io/placeholder.jpg"),
     });
 
@@ -93,11 +106,11 @@ describe("processData", () => {
     expect(movies[0]!.poster).toBe("https://image.tmdb.org/t/p/w500/real.jpg");
   });
 
-  test("a real poster already supplied by the feed is kept -- TMDB is only a fallback", async () => {
+  test("a real poster already supplied by the feed is kept -- TMDB's poster is only a fallback, but metadata is still fetched for plot/language", async () => {
     const deps = fakeDeps({
       resolveImdbId: mock(async () => fakeMatch()),
       getRating: mock(async () => ({ rating: "8.5", datePublished: "" })),
-      getPosterUrl: mock(async () => "https://image.tmdb.org/t/p/w500/should-not-be-used.jpg"),
+      getMovieMetadata: mock(async () => ({ poster: "https://image.tmdb.org/t/p/w500/should-not-be-used.jpg", plot: "A test plot.", language: "fr" })),
       isPlaceholderPosterUrl: mock(async () => false),
     });
 
@@ -107,8 +120,11 @@ describe("processData", () => {
       deps
     );
 
-    expect(deps.getPosterUrl).not.toHaveBeenCalled();
+    expect(deps.getMovieMetadata).toHaveBeenCalledTimes(1);
+    // The feed's own poster wins -- TMDB's poster is only a fallback for when the feed has none.
     expect(movies[0]!.poster).toBe("https://feed.example.com/real-poster.jpg");
+    expect(movies[0]!.plot).toBe("A test plot.");
+    expect(movies[0]!.language).toBe("fr");
   });
 
   test("resolveImdbId failing is caught -- the movie is still returned, just unresolved", async () => {

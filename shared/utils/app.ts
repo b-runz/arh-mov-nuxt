@@ -2,7 +2,7 @@ import moment from 'moment';
 import type { Movie } from "../types/movie";
 import { getRating } from './imdb';
 import { resolveImdbId, type KinoMovieInput } from './imdbMatcher';
-import { get_poster_url } from './tmdb_poster';
+import { get_movie_metadata } from './tmdb_poster';
 import { isPlaceholderPosterUrl } from './posterPlaceholder';
 import { runWithConcurrencyLimit } from './concurrencyLimit';
 
@@ -16,14 +16,14 @@ const ENRICHMENT_CONCURRENCY = 5;
 export interface MovieEnrichmentDeps {
     resolveImdbId: typeof resolveImdbId;
     getRating: typeof getRating;
-    getPosterUrl: typeof get_poster_url;
+    getMovieMetadata: typeof get_movie_metadata;
     isPlaceholderPosterUrl: typeof isPlaceholderPosterUrl;
 }
 
 const defaultDeps: MovieEnrichmentDeps = {
     resolveImdbId,
     getRating,
-    getPosterUrl: get_poster_url,
+    getMovieMetadata: get_movie_metadata,
     isPlaceholderPosterUrl,
 };
 
@@ -108,14 +108,21 @@ async function enrichMovieWithImdbData(
                 }
             }
 
-            if (!movies[id]!.poster && tmdbApiKey) {
-                // TMDB doesn't always cross-link its own entry to the
-                // matched IMDb id, which makes the by-imdb-id lookup
-                // come back empty even though TMDB has the movie --
-                // fall back to the poster captured directly off the
-                // title-search hit during matching in that case.
-                const tmdbPoster = await deps.getPosterUrl(match.imdbId, tmdbApiKey) || match.tmdbPosterUrl;
-                if (tmdbPoster) movies[id]!.poster = tmdbPoster;
+            // Fetched regardless of whether the feed already gave us a poster --
+            // plot/language aren't available from any other source, so this is
+            // the only chance to ever pick them up for this movie.
+            if (tmdbApiKey) {
+                const metadata = await deps.getMovieMetadata(match.imdbId, tmdbApiKey);
+                if (!movies[id]!.poster) {
+                    // TMDB doesn't always cross-link its own entry to the
+                    // matched IMDb id, which makes the by-imdb-id lookup
+                    // come back empty even though TMDB has the movie --
+                    // fall back to the poster captured directly off the
+                    // title-search hit during matching in that case.
+                    movies[id]!.poster = metadata.poster || match.tmdbPosterUrl || '';
+                }
+                movies[id]!.plot = metadata.plot;
+                movies[id]!.language = metadata.language;
             }
         }
     } catch (error) {
@@ -157,7 +164,9 @@ export async function processData(
                 id: id,
                 poster: poster_uri,
                 release_date: release_date.toISOString(),
-                display_release_date: release_date.locale("en").format('DD. MMM. YYYY')
+                display_release_date: release_date.locale("en").format('DD. MMM. YYYY'),
+                plot: '',
+                language: ''
             }
 
             // The GraphQL schedule API doesn't expose an IMDb id directly,
