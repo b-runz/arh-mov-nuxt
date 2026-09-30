@@ -79,14 +79,18 @@ export interface Candidate {
   titleAlreadyRelevant?: boolean; // true when the source already did alias/AKA matching
   posterPath?: string | null; // TMDB poster_path, only ever set by the tmdb source
   /**
-   * The candidate's own Danish release/AKA title(s) (TMDB's per-country
-   * alternative_titles, only ever set by the tmdb source). Kino's title is
-   * usually the actual Danish title, not the English one -- e.g. "Shaun the
-   * Sheep Movie" released in Denmark as "F for Får" -- so without this, a
-   * correct match can only be inferred indirectly (year/type/popularity
-   * bonuses covering for near-zero text similarity against the English
-   * title). Scoring against the real Danish title directly turns that into
-   * a genuine, verifiable text match instead of a trust-the-source guess.
+   * The candidate's own Danish release/AKA title(s) -- TMDB's per-country
+   * alternative_titles and/or IMDb's own per-country akas, whichever source
+   * has it (the two catalogs disagree on AKA coverage often enough that
+   * neither alone is reliable: e.g. tt0038650/"It's a Wonderful Life" has a
+   * Danish aka on IMDb's own akas list ("Det er herligt at leve") but none
+   * at all in TMDB's alternative_titles). Kino's title is usually the actual
+   * Danish title, not the English one -- e.g. "Shaun the Sheep Movie"
+   * released in Denmark as "F for Får" -- so without this, a correct match
+   * can only be inferred indirectly (year/type/popularity bonuses covering
+   * for near-zero text similarity against the English title). Scoring
+   * against the real Danish title directly turns that into a genuine,
+   * verifiable text match instead of a trust-the-source guess.
    */
   akaTitles?: string[];
   /**
@@ -558,6 +562,7 @@ const IMDB_SEARCH_QUERY = `
               countriesOfOrigin { countries { text } }
               runtime { seconds }
               ratingsSummary { voteCount }
+              akas(first: 100) { edges { node { text country { text } } } }
             }
           }
         }
@@ -575,6 +580,20 @@ interface ImdbSearchEntity {
   countriesOfOrigin: { countries: Array<{ text: string }> } | null;
   runtime: { seconds: number } | null;
   ratingsSummary: { voteCount: number } | null;
+  // Capped at 100 (see IMDB_SEARCH_QUERY) rather than paginated -- this is a
+  // best-effort signal fetched inline with every search hit, not a page
+  // users wait on, and a title with 100+ regional akas whose Danish one
+  // happens to sit past that cut is no worse off than before this existed.
+  akas: { edges: Array<{ node: { text: string; country: { text: string } | null } }> } | null;
+}
+
+// IMDb's akas list isn't scoped by country server-side (its `filter` arg is
+// an enum whose accepted values aren't documented/discoverable -- every
+// guessed country-code/object shape was rejected), so every result is
+// fetched and the Danish one(s) picked out here, the same way tmdbCandidates
+// filters TMDB's own unscoped alternative_titles list to iso_3166_1 "DK".
+function danishAkas(akas: ImdbSearchEntity["akas"]): string[] {
+  return (akas?.edges ?? []).filter((e) => e.node.country?.text === "Denmark").map((e) => e.node.text);
 }
 
 async function imdbGraphqlSearch(term: string): Promise<ImdbSearchEntity[]> {
@@ -609,6 +628,7 @@ async function imdbGraphqlCandidates(movie: KinoMovieInput): Promise<Candidate[]
     runtimeMinutes: e.runtime ? Math.round(e.runtime.seconds / 60) : null,
     typeText: e.titleType?.text ?? null,
     voteCount: e.ratingsSummary?.voteCount ?? null,
+    akaTitles: danishAkas(e.akas),
   }));
 }
 
