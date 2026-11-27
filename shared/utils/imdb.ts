@@ -27,12 +27,15 @@ export async function getRating(tt: string): Promise<ImdbData> {
             throw new Error('OMDB_API_KEY environment variable is not set');
         }
 
-        const url = `https://omdbapi.com{encodeURIComponent(tt)}&apikey=${encodeURIComponent(apiKey)}`;
-        const response = await fetchWithRetry(url, {
-            method: 'GET',
+        const url = new URL("https://omdbapi.com");
+        url.searchParams.set("i", tt);
+        url.searchParams.set("apikey", apiKey);
+        
+        const response = await fetchWithRetry(url.toString(), {
+            method: "GET",
             headers: {
-                'Accept': 'application/json',
-                'User-Agent': 'node-fetch'
+                "Accept": "application/json",
+                "User-Agent": "node-fetch"
             }
         });
 
