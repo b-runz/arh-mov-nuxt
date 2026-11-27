@@ -1,4 +1,7 @@
+import dns from "node:dns";
 import { fetchWithRetry } from "./fetchRetry";
+
+dns.setDefaultResultOrder("ipv4first");
 
 export interface ImdbData {
     rating: string;
@@ -25,7 +28,13 @@ export async function getRating(tt: string): Promise<ImdbData> {
         }
 
         const url = `https://omdbapi.com{encodeURIComponent(tt)}&apikey=${encodeURIComponent(apiKey)}`;
-        const response = await fetchWithRetry(url);
+        const response = await fetchWithRetry(url, {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/json',
+                'User-Agent': 'node-fetch'
+            }
+        });
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -42,7 +51,8 @@ export async function getRating(tt: string): Promise<ImdbData> {
             datePublished: formatOmdbDate(data.Released)
         };
     } catch (error) {
-        console.warn(`[imdb] rating lookup failed for ${tt}: ${(error as Error)?.message ?? error}`);
+        const err = error as Error & { cause?: unknown };
+        console.warn(`[imdb] rating lookup failed for ${tt}: ${err?.message ?? error}`, err?.cause ?? '');
         return { rating: '?', datePublished: '' };
     }
 }
