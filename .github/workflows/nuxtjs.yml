@@ -34,6 +34,7 @@ jobs:
         env:
           TMDB_READ_TOKEN: ${{ secrets.TMDB_READ_TOKEN }}
           NUXT_PUBLIC_JEV_PROXY_URL: https://azurewebsites.net
+          OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}
         run: bun run generate
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
